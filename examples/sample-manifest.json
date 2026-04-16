@@ -1,0 +1,91 @@
+{
+  "@context": "http://iiif.io/api/presentation/3/context.json",
+  "id": "https://example.org/iiif/book1/manifest",
+  "type": "Manifest",
+  "label": {"en": ["A Sample Illuminated Book"]},
+  "summary": {"en": ["A tiny fixture manifest used by the xiiif test suite."]},
+  "metadata": [
+    {"label": {"en": ["Author"]}, "value": {"en": ["Jane Doe"]}},
+    {"label": {"en": ["Date"]},   "value": {"en": ["2024"]}},
+    {"label": {"en": ["Rights"]}, "value": {"en": ["CC BY 4.0"]}}
+  ],
+  "thumbnail": [
+    {
+      "id": "https://example.org/iiif/image/book1-p1/full/!256,256/0/default.jpg",
+      "type": "Image",
+      "format": "image/jpeg"
+    }
+  ],
+  "items": [
+    {
+      "id": "https://example.org/iiif/book1/canvas/p1",
+      "type": "Canvas",
+      "label": {"en": ["Folio 1r"]},
+      "height": 1800,
+      "width": 1200,
+      "items": [
+        {
+          "id": "https://example.org/iiif/book1/canvas/p1/annotationpage/1",
+          "type": "AnnotationPage",
+          "items": [
+            {
+              "id": "https://example.org/iiif/book1/canvas/p1/annotation/1",
+              "type": "Annotation",
+              "motivation": "painting",
+              "target": "https://example.org/iiif/book1/canvas/p1",
+              "body": {
+                "id": "https://example.org/iiif/image/book1-p1/full/max/0/default.jpg",
+                "type": "Image",
+                "format": "image/jpeg",
+                "width": 1200,
+                "height": 1800,
+                "service": [
+                  {
+                    "id": "https://example.org/iiif/image/book1-p1",
+                    "type": "ImageService3",
+                    "profile": "level1"
+                  }
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "https://example.org/iiif/book1/canvas/p2",
+      "type": "Canvas",
+      "label": {"en": ["Folio 1v"]},
+      "height": 1800,
+      "width": 1200,
+      "items": [
+        {
+          "id": "https://example.org/iiif/book1/canvas/p2/annotationpage/1",
+          "type": "AnnotationPage",
+          "items": [
+            {
+              "id": "https://example.org/iiif/book1/canvas/p2/annotation/1",
+              "type": "Annotation",
+              "motivation": "painting",
+              "target": "https://example.org/iiif/book1/canvas/p2",
+              "body": {
+                "id": "https://example.org/iiif/image/book1-p2/full/max/0/default.jpg",
+                "type": "Image",
+                "format": "image/jpeg",
+                "width": 1200,
+                "height": 1800,
+                "service": [
+                  {
+                    "id": "https://example.org/iiif/image/book1-p2",
+                    "type": "ImageService3",
+                    "profile": "level2"
+                  }
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

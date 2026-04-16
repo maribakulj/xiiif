@@ -1,0 +1,119 @@
+;;; xiiif-api.el --- HTTP/JSON transport for xiiif -*- lexical-binding: t; -*-
+
+;; Copyright (C) 2026 The xiiif authors
+
+;; Author: The xiiif authors
+;; Homepage: https://github.com/maribakulj/xiiif
+;; SPDX-License-Identifier: GPL-3.0-or-later
+
+;;; Commentary:
+
+;; Thin wrapper around `url.el' that fetches a IIIF resource and
+;; returns it as a parsed JSON value (alist).  All transport,
+;; HTTP-status and JSON-decode errors are translated into the
+;; dedicated `xiiif-' error symbols defined here, so higher layers
+;; only need to handle well-typed failures.
+
+;;; Code:
+
+(require 'json)
+(require 'url)
+(require 'url-http)
+
+(define-error 'xiiif-error "xiiif error")
+(define-error 'xiiif-network-error "xiiif network error" 'xiiif-error)
+(define-error 'xiiif-http-error    "xiiif HTTP error"    'xiiif-error)
+(define-error 'xiiif-parse-error   "xiiif JSON parse error" 'xiiif-error)
+
+(defcustom xiiif-api-timeout 30
+  "Timeout in seconds for synchronous IIIF HTTP requests."
+  :type 'integer
+  :group 'xiiif)
+
+(defcustom xiiif-api-user-agent
+  (format "xiiif.el/0.1.0 Emacs/%s" emacs-version)
+  "User-Agent string used for IIIF HTTP requests."
+  :type 'string
+  :group 'xiiif)
+
+(defun xiiif-api--valid-url-p (url)
+  "Return non-nil if URL looks like an http(s) URL."
+  (and (stringp url)
+       (string-match-p "\\`https?://[^[:space:]]+\\'" url)))
+
+(defun xiiif-api--status-code ()
+  "Parse the HTTP status code from the current `url' response buffer.
+Point must be at the beginning of the buffer.  Returns an integer or nil."
+  (save-excursion
+    (goto-char (point-min))
+    (when (re-search-forward "^HTTP/[0-9.]+ \\([0-9]+\\)" nil t)
+      (string-to-number (match-string 1)))))
+
+(defun xiiif-api--skip-headers ()
+  "Move point past the HTTP header section in a `url' response buffer."
+  (goto-char (point-min))
+  (unless (re-search-forward "\r?\n\r?\n" nil t)
+    (signal 'xiiif-parse-error (list "malformed HTTP response: no body"))))
+
+(defun xiiif-api--decode-body ()
+  "Return the body of the current `url' buffer as a decoded string."
+  (xiiif-api--skip-headers)
+  (decode-coding-region (point) (point-max) 'utf-8 t))
+
+(defun xiiif-api--parse-json (body url)
+  "Parse BODY as JSON or signal `xiiif-parse-error' with URL context."
+  (condition-case err
+      (let ((json-object-type 'alist)
+            (json-array-type  'vector)
+            (json-key-type    'symbol)
+            (json-false       :json-false)
+            (json-null        nil))
+        (json-read-from-string body))
+    (error
+     (signal 'xiiif-parse-error
+             (list url (error-message-string err))))))
+
+(defun xiiif-api-fetch-json (url)
+  "Fetch URL synchronously and return parsed JSON.
+
+Signals `xiiif-network-error' on transport failure,
+`xiiif-http-error' on non-2xx responses, and
+`xiiif-parse-error' on invalid JSON."
+  (unless (xiiif-api--valid-url-p url)
+    (signal 'xiiif-network-error (list url "invalid URL")))
+  (let* ((url-request-extra-headers
+          `(("Accept" . "application/ld+json, application/json")
+            ("User-Agent" . ,xiiif-api-user-agent)))
+         (url-mime-accept-string
+          "application/ld+json, application/json")
+         (buffer (condition-case err
+                     (url-retrieve-synchronously url t t xiiif-api-timeout)
+                   (error
+                    (signal 'xiiif-network-error
+                            (list url (error-message-string err)))))))
+    (unwind-protect
+        (progn
+          (unless (buffer-live-p buffer)
+            (signal 'xiiif-network-error (list url "no response")))
+          (with-current-buffer buffer
+            (let ((status (xiiif-api--status-code)))
+              (when (and status (or (< status 200) (>= status 400)))
+                (signal 'xiiif-http-error (list url status)))
+              (xiiif-api--parse-json (xiiif-api--decode-body) url))))
+      (when (buffer-live-p buffer) (kill-buffer buffer)))))
+
+(defun xiiif-api-download-file (url destination)
+  "Download URL to DESTINATION, overwriting if it exists.
+Returns DESTINATION on success or signals an `xiiif-network-error'."
+  (unless (xiiif-api--valid-url-p url)
+    (signal 'xiiif-network-error (list url "invalid URL")))
+  (condition-case err
+      (progn
+        (url-copy-file url destination t)
+        destination)
+    (error
+     (signal 'xiiif-network-error
+             (list url (error-message-string err))))))
+
+(provide 'xiiif-api)
+;;; xiiif-api.el ends here

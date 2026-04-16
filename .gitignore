@@ -1,0 +1,10 @@
+*.elc
+*~
+\#*\#
+.\#*
+/.eldev/
+/.cask/
+/dist/
+/build/
+.DS_Store
+*-autoloads.el
