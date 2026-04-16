@@ -1,0 +1,328 @@
+;;; xiiif-ui.el --- Buffers and major modes for xiiif -*- lexical-binding: t; -*-
+
+;; Copyright (C) 2026 The xiiif authors
+
+;; Author: The xiiif authors
+;; Homepage: https://github.com/maribakulj/xiiif
+;; SPDX-License-Identifier: GPL-3.0-or-later
+
+;;; Commentary:
+
+;; Three buffers make up the xiiif UI:
+;;
+;;   *XIIIF Manifest*   - overview of the currently open manifest
+;;   *XIIIF Canvases*   - tabulated list of its canvases
+;;   *XIIIF Canvas*     - detail view for one canvas, with image service
+;;
+;; All three share the same keybinding vocabulary: RET opens, g
+;; refreshes, y copies a URL, d downloads an image, i inserts into
+;; Org, J shows the raw JSON, q quits.
+
+;;; Code:
+
+(require 'cl-lib)
+(require 'subr-x)
+(require 'tabulated-list)
+(require 'json)
+
+(require 'xiiif-core)
+(require 'xiiif-cache)
+(require 'xiiif-image)
+
+(defconst xiiif-ui--manifest-buffer "*XIIIF Manifest*")
+(defconst xiiif-ui--canvases-buffer "*XIIIF Canvases*")
+(defconst xiiif-ui--canvas-buffer   "*XIIIF Canvas*")
+(defconst xiiif-ui--json-buffer     "*XIIIF JSON*")
+
+(defface xiiif-heading
+  '((t :inherit font-lock-function-name-face :weight bold))
+  "Face for section headings in xiiif buffers.")
+
+(defface xiiif-key
+  '((t :inherit font-lock-variable-name-face))
+  "Face for field labels in xiiif buffers.")
+
+(defface xiiif-hint
+  '((t :inherit font-lock-comment-face :slant italic))
+  "Face for in-buffer key hints.")
+
+
+;;; ---------- small rendering helpers ----------
+
+(defun xiiif-ui--insert-heading (text)
+  "Insert TEXT as a section heading."
+  (insert (propertize text 'face 'xiiif-heading) "\n")
+  (insert (propertize (make-string (length text) ?-) 'face 'xiiif-heading))
+  (insert "\n"))
+
+(defun xiiif-ui--insert-field (label value)
+  "Insert a one-line LABEL: VALUE pair, skipping empty values."
+  (when (and value (not (string-empty-p (format "%s" value))))
+    (insert (propertize (format "%-10s " (concat label ":"))
+                        'face 'xiiif-key))
+    (insert (format "%s" value) "\n")))
+
+(defun xiiif-ui--insert-hints (pairs)
+  "Insert a one-line hint summary from PAIRS of (KEY . DESCRIPTION)."
+  (insert (propertize
+           (mapconcat (lambda (p) (format "[%s] %s" (car p) (cdr p)))
+                      pairs "   ")
+           'face 'xiiif-hint))
+  (insert "\n\n"))
+
+(defun xiiif-ui--size (canvas)
+  "Return a short WxH string for CANVAS, or an empty string."
+  (let ((w (xiiif-canvas-width canvas))
+        (h (xiiif-canvas-height canvas)))
+    (if (and w h) (format "%sx%s" w h) "")))
+
+
+;;; ---------- manifest overview ----------
+
+(defvar xiiif-manifest-mode-map
+  (let ((map (make-sparse-keymap)))
+    (define-key map (kbd "g")   #'xiiif-refresh)
+    (define-key map (kbd "RET") #'xiiif-browse-canvases)
+    (define-key map (kbd "c")   #'xiiif-browse-canvases)
+    (define-key map (kbd "J")   #'xiiif-show-raw-json)
+    (define-key map (kbd "y")   #'xiiif-copy-manifest-url)
+    (define-key map (kbd "i")   #'xiiif-insert-org-link)
+    (define-key map (kbd "q")   #'quit-window)
+    map)
+  "Keymap for `xiiif-manifest-mode'.")
+
+(define-derived-mode xiiif-manifest-mode special-mode "XIIIF-Manifest"
+  "Major mode for the IIIF manifest overview buffer."
+  (buffer-disable-undo)
+  (setq-local truncate-lines t))
+
+(defun xiiif-ui-render-manifest (manifest)
+  "Render MANIFEST into the overview buffer and display it."
+  (let ((buf (get-buffer-create xiiif-ui--manifest-buffer)))
+    (with-current-buffer buf
+      (xiiif-manifest-mode)
+      (let ((inhibit-read-only t))
+        (erase-buffer)
+        (xiiif-ui--insert-hints
+         '(("RET" . "canvases") ("y" . "copy URL")
+           ("J" . "raw JSON")   ("i" . "org link")
+           ("g" . "refresh")    ("q" . "quit")))
+        (xiiif-ui--insert-heading (xiiif-manifest-title manifest))
+        (xiiif-ui--insert-field "URL"  (xiiif-manifest-url manifest))
+        (xiiif-ui--insert-field "ID"   (xiiif-manifest-id manifest))
+        (xiiif-ui--insert-field "Type" (xiiif-manifest-type manifest))
+        (let ((summary (xiiif-label-string (xiiif-manifest-summary manifest))))
+          (unless (string-empty-p summary)
+            (insert "\n")
+            (xiiif-ui--insert-heading "Summary")
+            (insert summary "\n")))
+        (let ((pairs (xiiif-metadata-pairs (xiiif-manifest-metadata manifest))))
+          (when pairs
+            (insert "\n")
+            (xiiif-ui--insert-heading "Metadata")
+            (dolist (pair pairs)
+              (xiiif-ui--insert-field (car pair) (cdr pair)))))
+        (let ((canvases (xiiif-manifest-canvases manifest)))
+          (insert "\n")
+          (xiiif-ui--insert-heading
+           (format "Canvases (%d)" (length canvases)))
+          (insert "Press RET or c to browse.\n"))
+        (goto-char (point-min))))
+    (pop-to-buffer-same-window buf)))
+
+
+;;; ---------- canvas browser ----------
+
+(defvar xiiif-canvas-list-mode-map
+  (let ((map (make-sparse-keymap)))
+    (define-key map (kbd "RET") #'xiiif-ui--open-canvas-at-point)
+    (define-key map (kbd "o")   #'xiiif-ui--open-canvas-at-point)
+    (define-key map (kbd "y")   #'xiiif-ui--copy-image-url-at-point)
+    (define-key map (kbd "d")   #'xiiif-ui--download-image-at-point)
+    (define-key map (kbd "i")   #'xiiif-ui--insert-org-link-at-point)
+    (define-key map (kbd "g")   #'xiiif-refresh)
+    (define-key map (kbd "q")   #'quit-window)
+    map)
+  "Keymap for `xiiif-canvas-list-mode'.")
+
+(define-derived-mode xiiif-canvas-list-mode tabulated-list-mode "XIIIF-Canvases"
+  "Major mode for browsing the canvases of a IIIF manifest."
+  (setq tabulated-list-format
+        [("#"     4  nil :right-align t)
+         ("Label" 48 t)
+         ("Size"  12 nil)
+         ("Img"   3  nil)])
+  (setq tabulated-list-padding 2)
+  (setq tabulated-list-sort-key nil)
+  (tabulated-list-init-header))
+
+(defun xiiif-ui--canvas-row (index canvas)
+  "Build a tabulated-list row from INDEX and CANVAS."
+  (list canvas
+        (vector (number-to-string index)
+                (xiiif-canvas-title canvas)
+                (xiiif-ui--size canvas)
+                (if (xiiif-canvas-image-service canvas) "yes" "-"))))
+
+(defun xiiif-ui-render-canvases (manifest)
+  "Render the canvas browser for MANIFEST and display it."
+  (let ((buf (get-buffer-create xiiif-ui--canvases-buffer))
+        (canvases (xiiif-manifest-canvases manifest)))
+    (with-current-buffer buf
+      (xiiif-canvas-list-mode)
+      (setq-local xiiif-ui--manifest manifest)
+      (setq tabulated-list-entries
+            (cl-loop for c in canvases
+                     for i from 1
+                     collect (xiiif-ui--canvas-row i c)))
+      (tabulated-list-print t)
+      (setq-local mode-line-misc-info
+                  (list (format "  %s  [%d]"
+                                (xiiif-manifest-title manifest)
+                                (length canvases)))))
+    (pop-to-buffer-same-window buf)
+    (message "%d canvas%s   [RET] open  [y] copy  [d] download  [i] org  [g] refresh  [q] quit"
+             (length canvases)
+             (if (= 1 (length canvases)) "" "es"))))
+
+(defvar-local xiiif-ui--manifest nil
+  "The `xiiif-manifest' backing the current canvas list buffer.")
+
+(defun xiiif-ui--canvas-at-point ()
+  "Return the `xiiif-canvas' at point in a canvas list, or nil."
+  (and (derived-mode-p 'xiiif-canvas-list-mode)
+       (tabulated-list-get-id)))
+
+(defun xiiif-ui--open-canvas-at-point ()
+  "Open the canvas at point in a canvas list buffer."
+  (interactive)
+  (let ((canvas (xiiif-ui--canvas-at-point)))
+    (unless canvas (user-error "No canvas on this line"))
+    (xiiif-cache-set-canvas canvas)
+    (xiiif-ui-render-canvas canvas)))
+
+(defun xiiif-ui--copy-image-url-at-point ()
+  "Copy the default Image API URL for the canvas at point."
+  (interactive)
+  (let ((canvas (xiiif-ui--canvas-at-point)))
+    (unless canvas (user-error "No canvas on this line"))
+    (let ((url (xiiif-image-url canvas)))
+      (unless url (user-error "Canvas has no image service"))
+      (kill-new url)
+      (message "Copied: %s" url))))
+
+(defun xiiif-ui--download-image-at-point ()
+  "Download the image for the canvas at point."
+  (interactive)
+  (let ((canvas (xiiif-ui--canvas-at-point)))
+    (unless canvas (user-error "No canvas on this line"))
+    (xiiif-ui-download-canvas-image canvas)))
+
+(defun xiiif-ui--insert-org-link-at-point ()
+  "Insert an Org link for the canvas at point."
+  (interactive)
+  (let ((canvas (xiiif-ui--canvas-at-point)))
+    (unless canvas (user-error "No canvas on this line"))
+    (xiiif-cache-set-canvas canvas)
+    (call-interactively #'xiiif-insert-org-link)))
+
+
+;;; ---------- canvas detail ----------
+
+(defvar xiiif-canvas-mode-map
+  (let ((map (make-sparse-keymap)))
+    (define-key map (kbd "y")   #'xiiif-copy-image-url)
+    (define-key map (kbd "d")   #'xiiif-download-image)
+    (define-key map (kbd "i")   #'xiiif-insert-org-link)
+    (define-key map (kbd "J")   #'xiiif-show-raw-json)
+    (define-key map (kbd "g")   #'xiiif-refresh)
+    (define-key map (kbd "q")   #'quit-window)
+    map)
+  "Keymap for `xiiif-canvas-mode'.")
+
+(define-derived-mode xiiif-canvas-mode special-mode "XIIIF-Canvas"
+  "Major mode for the IIIF canvas detail buffer."
+  (buffer-disable-undo)
+  (setq-local truncate-lines t))
+
+(defun xiiif-ui-render-canvas (canvas)
+  "Render the canvas detail buffer for CANVAS and display it."
+  (let ((buf (get-buffer-create xiiif-ui--canvas-buffer))
+        (service (xiiif-canvas-image-service canvas)))
+    (with-current-buffer buf
+      (xiiif-canvas-mode)
+      (setq-local xiiif-ui--canvas canvas)
+      (let ((inhibit-read-only t))
+        (erase-buffer)
+        (xiiif-ui--insert-hints
+         '(("y" . "copy URL") ("d" . "download")
+           ("i" . "org link") ("J" . "raw JSON")
+           ("q" . "quit")))
+        (xiiif-ui--insert-heading (xiiif-canvas-title canvas))
+        (xiiif-ui--insert-field "ID"     (xiiif-canvas-id canvas))
+        (xiiif-ui--insert-field "Type"   (xiiif-canvas-type canvas))
+        (xiiif-ui--insert-field "Size"   (xiiif-ui--size canvas))
+        (xiiif-ui--insert-field "Image"  (xiiif-canvas-image-url canvas))
+        (insert "\n")
+        (xiiif-ui--insert-heading "Image service")
+        (if (not service)
+            (insert "No IIIF Image API service detected on this canvas.\n")
+          (xiiif-ui--insert-field "Base"    (xiiif-image-service-id service))
+          (xiiif-ui--insert-field "Type"    (xiiif-image-service-type service))
+          (xiiif-ui--insert-field "Profile" (xiiif-image-service-profile service))
+          (xiiif-ui--insert-field "info"    (xiiif-image-info-url service))
+          (insert "\n")
+          (xiiif-ui--insert-heading "Default derivative")
+          (xiiif-ui--insert-field "URL" (xiiif-image-url canvas)))
+        (goto-char (point-min))))
+    (pop-to-buffer-same-window buf)))
+
+(defvar-local xiiif-ui--canvas nil
+  "The `xiiif-canvas' backing the current canvas detail buffer.")
+
+
+;;; ---------- image download interactive helper ----------
+
+(defun xiiif-ui-download-canvas-image (canvas)
+  "Interactively download an image derived from CANVAS.
+Prompts for size and destination; other parameters take defaults."
+  (let* ((service (xiiif-canvas-image-service canvas))
+         (_       (unless service
+                    (user-error "Canvas has no image service")))
+         (size    (read-string
+                   (format "Size (default %s): " xiiif-image-default-size)
+                   nil nil xiiif-image-default-size))
+         (format  (read-string
+                   (format "Format (default %s): " xiiif-image-default-format)
+                   nil nil xiiif-image-default-format))
+         (default (expand-file-name
+                   (xiiif-image-suggested-filename service format)
+                   xiiif-image-download-directory))
+         (destination (read-file-name "Save image to: "
+                                      (file-name-directory default)
+                                      default nil
+                                      (file-name-nondirectory default))))
+    (message "Downloading...")
+    (xiiif-image-download canvas destination :size size :format format)
+    (message "Saved %s" destination)))
+
+
+;;; ---------- raw JSON ----------
+
+(defun xiiif-ui-show-json (obj title)
+  "Show parsed JSON OBJ in a buffer named after TITLE."
+  (let ((buf (get-buffer-create
+              (format "*XIIIF JSON: %s*" title))))
+    (with-current-buffer buf
+      (let ((inhibit-read-only t)
+            (json-encoding-pretty-print t))
+        (erase-buffer)
+        (insert (json-encode obj))
+        (goto-char (point-min))
+        (cond ((fboundp 'json-mode) (json-mode))
+              ((fboundp 'js-mode)   (js-mode)))
+        (view-mode 1)))
+    (pop-to-buffer buf)))
+
+(provide 'xiiif-ui)
+;;; xiiif-ui.el ends here
