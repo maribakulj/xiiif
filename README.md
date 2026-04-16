@@ -183,6 +183,7 @@ Tests use ERT and require no external package.
 ```
 cd xiiif
 emacs -batch -L . -L tests \
+      -l tests/xiiif-api-test.el \
       -l tests/xiiif-core-test.el \
       -l tests/xiiif-image-test.el \
       -f ert-run-tests-batch-and-exit
