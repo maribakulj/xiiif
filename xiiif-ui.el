@@ -33,6 +33,7 @@
 (defconst xiiif-ui--canvases-buffer   "*XIIIF Canvases*")
 (defconst xiiif-ui--canvas-buffer     "*XIIIF Canvas*")
 (defconst xiiif-ui--collection-buffer "*XIIIF Collection*")
+(defconst xiiif-ui--info-buffer       "*XIIIF Image Info*")
 (defconst xiiif-ui--json-buffer       "*XIIIF JSON*")
 
 (defface xiiif-heading
@@ -235,6 +236,7 @@
     (define-key map (kbd "y")   #'xiiif-copy-image-url)
     (define-key map (kbd "d")   #'xiiif-download-image)
     (define-key map (kbd "i")   #'xiiif-insert-org-link)
+    (define-key map (kbd "I")   #'xiiif-show-info-json)
     (define-key map (kbd "J")   #'xiiif-show-raw-json)
     (define-key map (kbd "g")   #'xiiif-refresh)
     (define-key map (kbd "q")   #'quit-window)
@@ -257,8 +259,8 @@
         (erase-buffer)
         (xiiif-ui--insert-hints
          '(("y" . "copy URL") ("d" . "download")
-           ("i" . "org link") ("J" . "raw JSON")
-           ("q" . "quit")))
+           ("i" . "org link") ("I" . "info.json")
+           ("J" . "raw JSON") ("q" . "quit")))
         (xiiif-ui--insert-heading (xiiif-canvas-title canvas))
         (xiiif-ui--insert-field "ID"     (xiiif-canvas-id canvas))
         (xiiif-ui--insert-field "Type"   (xiiif-canvas-type canvas))
@@ -394,6 +396,107 @@ Prompts for size and destination; other parameters take defaults."
            (link   (format "[[%s][%s]]" target label)))
       (kill-new link)
       (message "Copied to kill ring: %s" link))))
+
+
+;;; ---------- image info.json ----------
+
+(defvar xiiif-info-mode-map
+  (let ((map (make-sparse-keymap)))
+    (define-key map (kbd "g") #'xiiif-ui--info-refresh)
+    (define-key map (kbd "y") #'xiiif-ui--info-copy-url)
+    (define-key map (kbd "J") #'xiiif-ui--info-show-raw)
+    (define-key map (kbd "q") #'quit-window)
+    map)
+  "Keymap for `xiiif-info-mode'.")
+
+(define-derived-mode xiiif-info-mode special-mode "XIIIF-Info"
+  "Major mode for the IIIF Image API info.json display buffer."
+  (buffer-disable-undo)
+  (setq-local truncate-lines t))
+
+(defvar-local xiiif-ui--info nil
+  "The `xiiif-image-info' backing the current info buffer.")
+
+(defun xiiif-ui-render-info (info)
+  "Render INFO in the dedicated info buffer and display it."
+  (let ((buf (get-buffer-create xiiif-ui--info-buffer)))
+    (with-current-buffer buf
+      (xiiif-info-mode)
+      (setq-local xiiif-ui--info info)
+      (let ((inhibit-read-only t))
+        (erase-buffer)
+        (xiiif-ui--insert-hints
+         '(("y" . "copy URL") ("J" . "raw JSON")
+           ("g" . "refresh")  ("q" . "quit")))
+        (xiiif-ui--insert-heading
+         (or (xiiif-image-info-id info) "Image service"))
+        (xiiif-ui--insert-field "ID"        (xiiif-image-info-id info))
+        (xiiif-ui--insert-field "Type"      (xiiif-image-info-type info))
+        (xiiif-ui--insert-field "Protocol"  (xiiif-image-info-protocol info))
+        (xiiif-ui--insert-field "Compliance"
+                                (xiiif-image-info-compliance-level info))
+        (xiiif-ui--insert-field "Width"     (xiiif-image-info-width info))
+        (xiiif-ui--insert-field "Height"    (xiiif-image-info-height info))
+        (let ((sizes (xiiif-image-info-size-strings info)))
+          (when sizes
+            (insert "\n")
+            (xiiif-ui--insert-heading
+             (format "Advertised sizes (%d)" (length sizes)))
+            (dolist (s sizes) (insert "  " s "\n"))))
+        (let ((tiles (xiiif-image-info-tile-strings info)))
+          (when tiles
+            (insert "\n")
+            (xiiif-ui--insert-heading
+             (format "Tile schemes (%d)" (length tiles)))
+            (dolist (t* tiles) (insert "  " t* "\n"))))
+        (let ((formats (xiiif-image-info-formats info))
+              (qualities (xiiif-image-info-qualities info))
+              (feats (xiiif-image-info-extra-features info))
+              (rights (xiiif-image-info-rights info)))
+          (when (or formats qualities feats rights)
+            (insert "\n")
+            (xiiif-ui--insert-heading "Capabilities")
+            (when formats
+              (xiiif-ui--insert-field
+               "Formats" (mapconcat #'identity formats ", ")))
+            (when qualities
+              (xiiif-ui--insert-field
+               "Qualities" (mapconcat #'identity qualities ", ")))
+            (when feats
+              (xiiif-ui--insert-field
+               "Features" (mapconcat #'identity feats ", ")))
+            (xiiif-ui--insert-field "Rights" rights)))
+        (goto-char (point-min))))
+    (pop-to-buffer-same-window buf)))
+
+(declare-function xiiif-show-info-json "xiiif")
+
+(defun xiiif-ui--info-refresh ()
+  "Re-fetch the current info.json."
+  (interactive)
+  (unless xiiif-ui--info
+    (user-error "No info.json loaded"))
+  (xiiif-show-info-json (xiiif-image-info-id xiiif-ui--info)))
+
+(defun xiiif-ui--info-copy-url ()
+  "Copy the info.json URL for the current buffer to the kill-ring."
+  (interactive)
+  (unless xiiif-ui--info
+    (user-error "No info.json loaded"))
+  (let ((url (concat (string-trim-right
+                      (xiiif-image-info-id xiiif-ui--info) "/")
+                     "/info.json")))
+    (kill-new url)
+    (message "Copied %s" url)))
+
+(defun xiiif-ui--info-show-raw ()
+  "Show the raw JSON of the current info buffer."
+  (interactive)
+  (unless xiiif-ui--info
+    (user-error "No info.json loaded"))
+  (xiiif-ui-show-json (xiiif-image-info-raw xiiif-ui--info)
+                      (or (xiiif-image-info-id xiiif-ui--info)
+                          "info.json")))
 
 
 ;;; ---------- raw JSON ----------

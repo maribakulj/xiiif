@@ -201,6 +201,21 @@ quality and format instead of using defaults."
   (xiiif-ui-download-canvas-image (xiiif--require-canvas)))
 
 ;;;###autoload
+(defun xiiif-show-info-json (&optional target)
+  "Fetch and display the Image API info.json for TARGET.
+TARGET may be a URL string, a `xiiif-image-service', a `xiiif-canvas',
+or nil to use the contextual canvas."
+  (interactive)
+  (let ((service (or target (xiiif--require-canvas))))
+    (message "xiiif: fetching info.json...")
+    (xiiif-image-fetch-info-async
+     service
+     (lambda (info)
+       (xiiif-ui-render-info info)
+       (message "xiiif: loaded info.json for %s"
+                (or (xiiif-image-info-id info) "image service"))))))
+
+;;;###autoload
 (defun xiiif-copy-manifest-url ()
   "Copy the URL of the current manifest to the kill ring."
   (interactive)
