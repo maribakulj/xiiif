@@ -1,0 +1,23 @@
+{
+  "@context": "http://iiif.io/api/image/3/context.json",
+  "id": "https://example.org/iiif/image/book1-p1",
+  "type": "ImageService3",
+  "protocol": "http://iiif.io/api/image",
+  "profile": "level1",
+  "width": 6000,
+  "height": 4000,
+  "sizes": [
+    {"width": 150, "height": 100},
+    {"width": 600, "height": 400},
+    {"width": 1500, "height": 1000},
+    {"width": 3000, "height": 2000}
+  ],
+  "tiles": [
+    {"width": 512, "height": 512, "scaleFactors": [1, 2, 4, 8, 16]}
+  ],
+  "preferredFormats": ["jpg"],
+  "formats": ["jpg", "png"],
+  "qualities": ["default", "gray"],
+  "extraFeatures": ["rotationArbitrary", "regionSquare"],
+  "rights": "http://rightsstatements.org/vocab/NKC/1.0/"
+}

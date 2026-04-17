@@ -148,6 +148,7 @@ All commands are autoloaded.
 | `xiiif-open-canvas`         | Open the canvas at point or the current canvas.                  |
 | `xiiif-copy-image-url`      | Copy a derivative URL. `C-u` prompts for all parameters.         |
 | `xiiif-download-image`      | Download a derivative for the current/contextual canvas.         |
+| `xiiif-show-info-json`      | Fetch and display the Image API `info.json` for a canvas.        |
 | `xiiif-insert-org-link`     | Insert a manifest, canvas, image link, or metadata block.        |
 
 ### Auxiliary
@@ -165,12 +166,13 @@ All commands are autoloaded.
 `xiiif` uses four buffers, each in its own derived major mode. They
 share a vocabulary of keys.
 
-| Buffer                | Mode                       | Underlying mode        |
-| --------------------- | -------------------------- | ---------------------- |
-| `*XIIIF Manifest*`    | `xiiif-manifest-mode`      | `special-mode`         |
-| `*XIIIF Canvases*`    | `xiiif-canvas-list-mode`   | `tabulated-list-mode`  |
-| `*XIIIF Canvas*`      | `xiiif-canvas-mode`        | `special-mode`         |
-| `*XIIIF Collection*`  | `xiiif-collection-mode`    | `tabulated-list-mode`  |
+| Buffer                 | Mode                       | Underlying mode        |
+| ---------------------- | -------------------------- | ---------------------- |
+| `*XIIIF Manifest*`     | `xiiif-manifest-mode`      | `special-mode`         |
+| `*XIIIF Canvases*`     | `xiiif-canvas-list-mode`   | `tabulated-list-mode`  |
+| `*XIIIF Canvas*`       | `xiiif-canvas-mode`        | `special-mode`         |
+| `*XIIIF Collection*`   | `xiiif-collection-mode`    | `tabulated-list-mode`  |
+| `*XIIIF Image Info*`   | `xiiif-info-mode`          | `special-mode`         |
 
 Common bindings:
 
@@ -181,6 +183,7 @@ Common bindings:
 | `y`   | Copy the contextually useful URL                               |
 | `d`   | Download the contextual image (canvas browser, canvas detail)  |
 | `i`   | Insert an Org link (or copy to kill-ring in read-only buffers) |
+| `I`   | Fetch and display the image service `info.json` (canvas detail)|
 | `J`   | Show raw JSON                                                  |
 | `g`   | Refresh                                                        |
 | `q`   | `quit-window`                                                  |
@@ -241,6 +244,27 @@ In Lisp:
 
 `xiiif-image-info-url` returns the `info.json` endpoint of a service.
 
+### Inspecting `info.json`
+
+Inside the canvas detail buffer, `I` (`xiiif-show-info-json`) fetches
+the Image API `info.json` for the canvas's service and opens a
+dedicated `*XIIIF Image Info*` buffer.  It surfaces the id, declared
+type and protocol, the compliance level (for both v3 bare `levelN`
+profiles and v2 profile URIs), declared width/height, the list of
+advertised sizes, tile schemes with `scaleFactors`, supported
+formats/qualities/features, and a rights statement when present.
+
+The underlying helpers are usable directly from Lisp:
+
+```elisp
+(xiiif-image-fetch-info-async
+ canvas
+ (lambda (info)
+   (message "compliance=%s, sizes=%s"
+            (xiiif-image-info-compliance-level info)
+            (xiiif-image-info-size-strings info))))
+```
+
 `xiiif-image-download` writes a derivative to disk and creates parent
 directories as needed:
 
@@ -287,6 +311,9 @@ Internally, `xiiif` parses every resource into `cl-defstruct` types:
 - `xiiif-canvas`          — id, type, label, width, height, thumbnail,
   image-url, image-service, raw.
 - `xiiif-image-service`   — id (base URL), type, profile.
+- `xiiif-image-info`      — parsed `info.json`: id, type, protocol,
+  profile, width, height, sizes, tiles, preferred-formats, formats,
+  qualities, extra-features, rights, raw.
 - `xiiif-collection`      — url, id, type, label, summary, items, raw.
 - `xiiif-collection-item` — id, type, label (lazy stub for a child).
 
@@ -318,8 +345,8 @@ xiiif/
 | `xiiif-api`     | `xiiif-api-fetch-json` (sync) and `xiiif-api-fetch-json-async`. Defines `xiiif-network-error`, `xiiif-http-error`, `xiiif-parse-error`. |
 | `xiiif-core`    | `cl-defstruct` types, `xiiif-parse-manifest`, `xiiif-parse-collection`, `xiiif-resource-kind`, `xiiif-label-string`, `xiiif-metadata-pairs`. |
 | `xiiif-cache`   | Current manifest / canvas / collection; recent URL ring; tiny on-disk persistence. |
-| `xiiif-image`   | `xiiif-image-url`, `xiiif-image-info-url`, `xiiif-image-download`. |
-| `xiiif-ui`      | Four derived modes; renders all xiiif buffers. |
+| `xiiif-image`   | `xiiif-image-url`, `xiiif-image-info-url`, `xiiif-image-download`, `xiiif-image-fetch-info`, `xiiif-image-fetch-info-async`, and the `xiiif-image-info` parser. |
+| `xiiif-ui`      | Five derived modes; renders all xiiif buffers. |
 | `xiiif-org`     | `xiiif-org-insert-*` and the underlying link / metadata-block helpers. |
 
 ## Customization
@@ -389,10 +416,11 @@ emacs -batch -L . -L tests \
       -f ert-run-tests-batch-and-exit
 ```
 
-Two fixtures live under `examples/`:
+Three fixtures live under `examples/`:
 
 - `examples/sample-manifest.json` — a tiny v3 manifest with two canvases.
 - `examples/sample-collection.json` — a v3 collection with two manifest stubs and one sub-collection stub.
+- `examples/sample-info.json` — a v3 Image API `info.json` with advertised sizes, tiles, formats, qualities and rights.
 
 To try the package against real data without leaving the repo:
 
@@ -409,9 +437,9 @@ testing.)
 See [`ROADMAP.md`](ROADMAP.md) for the short-, medium-, and
 long-term plan. Highlights of the next sprints:
 
-- **0.2** — async fetch ✅, Collections ✅, structures/ranges navigation,
-  inline thumbnail preview, `info.json` integration, finer-grained
-  HTTP error reporting.
+- **0.2** — async fetch ✅, Collections ✅, `info.json` integration ✅,
+  structures/ranges navigation, inline thumbnail preview,
+  finer-grained HTTP error reporting.
 - **0.3** — bulk derivative export, `org-capture` template, citation
   export (BibTeX / CSL-JSON), annotation fetch, OCR/ALTO sidecars.
 - **0.4** — source registry (Gallica, LoC, Wellcome, DPLA…), hooks

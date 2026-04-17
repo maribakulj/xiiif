@@ -16,9 +16,9 @@ deliberately speculative.
 - [ ] **Thumbnail preview.** When `display-graphic-p', render the
   canvas thumbnail inline in the canvas detail buffer using
   `create-image`.
-- [ ] **info.json integration.** On demand, fetch the Image API
+- [x] **info.json integration.** On demand, fetch the Image API
   `info.json` and display the advertised sizes, tiles and profile
-  compliance level.
+  compliance level. *(shipped)*
 - [ ] **Better error surfaces.** Distinguish 401/403/404 from
   transport errors with tailored messages, and remember the offending
   URL for a one-key retry.
