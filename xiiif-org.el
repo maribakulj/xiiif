@@ -25,6 +25,16 @@
   (unless (featurep 'org)
     (require 'org)))
 
+(defun xiiif-org--emit (text)
+  "Insert TEXT at point if the current buffer is writable.
+Otherwise put TEXT on the kill-ring and notify the user; this lets
+the org-insert commands be bound inside read-only xiiif buffers."
+  (if buffer-read-only
+      (progn
+        (kill-new text)
+        (message "xiiif: copied to kill ring (buffer is read-only)"))
+    (insert text)))
+
 (defun xiiif-org--link (target description)
   "Return a formatted Org link to TARGET with DESCRIPTION."
   (format "[[%s][%s]]" target (or description target)))
@@ -68,29 +78,31 @@ The link target is the canvas ID if available, otherwise the manifest URL."
 
 ;;;###autoload
 (defun xiiif-org-insert-manifest (manifest)
-  "Insert an Org link for MANIFEST at point."
+  "Insert (or kill-ring-copy) an Org link for MANIFEST.
+Inserts at point in a writable buffer; copies to the kill-ring when
+the current buffer is read-only (e.g. inside a xiiif overview)."
   (xiiif-org--require)
-  (insert (xiiif-org-manifest-link manifest)))
+  (xiiif-org--emit (xiiif-org-manifest-link manifest)))
 
 ;;;###autoload
 (defun xiiif-org-insert-canvas (manifest canvas)
-  "Insert an Org link for CANVAS in MANIFEST at point."
+  "Insert (or kill-ring-copy) an Org link for CANVAS in MANIFEST."
   (xiiif-org--require)
-  (insert (xiiif-org-canvas-link manifest canvas)))
+  (xiiif-org--emit (xiiif-org-canvas-link manifest canvas)))
 
 ;;;###autoload
 (defun xiiif-org-insert-image (canvas)
-  "Insert an Org link to the default image derivative of CANVAS at point."
+  "Insert (or kill-ring-copy) an Org link to the default image derivative of CANVAS."
   (xiiif-org--require)
   (let ((link (xiiif-org-image-link canvas)))
     (unless link (user-error "Canvas has no image service"))
-    (insert link)))
+    (xiiif-org--emit link)))
 
 ;;;###autoload
 (defun xiiif-org-insert-metadata (manifest &optional canvas)
-  "Insert an Org metadata block for MANIFEST (and optional CANVAS) at point."
+  "Insert (or kill-ring-copy) an Org metadata block for MANIFEST and CANVAS."
   (xiiif-org--require)
-  (insert (xiiif-org-metadata-block manifest canvas) "\n"))
+  (xiiif-org--emit (concat (xiiif-org-metadata-block manifest canvas) "\n")))
 
 (provide 'xiiif-org)
 ;;; xiiif-org.el ends here

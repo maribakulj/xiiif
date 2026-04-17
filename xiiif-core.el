@@ -38,6 +38,14 @@ The first tag for which a value is present wins."
   "Normalized IIIF Image API service descriptor."
   id type profile)
 
+(cl-defstruct xiiif-collection
+  "Normalized IIIF collection."
+  url id type label summary items raw)
+
+(cl-defstruct xiiif-collection-item
+  "A lazy reference to a child Manifest or Collection inside a collection."
+  id type label)
+
 
 ;;; ---------- generic JSON helpers ----------
 
@@ -59,6 +67,15 @@ nil becomes nil."
     (list val))
    ((listp val) val)
    (t (list val))))
+
+(defun xiiif--normalize-type (type)
+  "Strip the `sc:' prefix from TYPE, returning a clean string or nil."
+  (cond
+   ((null type) nil)
+   ((and (stringp type) (string-prefix-p "sc:" type))
+    (substring type 3))
+   ((stringp type) type)
+   (t (format "%s" type))))
 
 
 ;;; ---------- label / language map handling ----------
@@ -149,7 +166,7 @@ and IIIF v2 (images -> Annotation -> resource)."
                       (xiiif--collect-services json))))
     (make-xiiif-canvas
      :id        (xiiif--get json 'id)
-     :type      (or (xiiif--get json 'type) "Canvas")
+     :type      (or (xiiif--normalize-type (xiiif--get json 'type)) "Canvas")
      :label     (xiiif--get json 'label)
      :width     (xiiif--get json 'width)
      :height    (xiiif--get json 'height)
@@ -189,7 +206,7 @@ Signals `xiiif-parse-error' if JSON does not look like a manifest."
   (make-xiiif-manifest
    :url      url
    :id       (xiiif--get json 'id)
-   :type     (or (xiiif--get json 'type) "Manifest")
+   :type     (or (xiiif--normalize-type (xiiif--get json 'type)) "Manifest")
    :label    (xiiif--get json 'label)
    :summary  (or (xiiif--get json 'summary)
                  (xiiif--get json 'description))
@@ -219,6 +236,83 @@ Signals `xiiif-parse-error' if JSON does not look like a manifest."
     (if index
         (format "%d. %s" index lbl)
       lbl)))
+
+
+
+;;; ---------- collections ----------
+
+(defun xiiif-collection-p-json (json)
+  "Return non-nil if JSON looks like a IIIF Collection."
+  (and (consp json)
+       (let ((type (xiiif--get json 'type)))
+         (or (equal type "Collection")
+             (equal type "sc:Collection")))))
+
+(defun xiiif--collection-raw-items (json)
+  "Return the raw list of children for collection JSON, handling v2 and v3."
+  (or (xiiif--as-list (xiiif--get json 'items))
+      ;; v2: collections + manifests, in that order.
+      (append (xiiif--as-list (xiiif--get json 'collections))
+              (xiiif--as-list (xiiif--get json 'manifests)))))
+
+(defun xiiif-parse-collection-item (json)
+  "Parse JSON into a `xiiif-collection-item' or return nil."
+  (when (consp json)
+    (let ((id (xiiif--get json 'id)))
+      (when id
+        (make-xiiif-collection-item
+         :id    id
+         :type  (or (xiiif--normalize-type (xiiif--get json 'type))
+                    "Manifest")
+         :label (xiiif--get json 'label))))))
+
+(defun xiiif-parse-collection (json &optional url)
+  "Parse JSON into a `xiiif-collection' associated with URL.
+Signals `xiiif-parse-error' if JSON does not look like a collection."
+  (unless (xiiif-collection-p-json json)
+    (signal 'xiiif-parse-error
+            (list (or url "collection") "not a IIIF collection")))
+  (make-xiiif-collection
+   :url     url
+   :id      (xiiif--get json 'id)
+   :type    (or (xiiif--normalize-type (xiiif--get json 'type)) "Collection")
+   :label   (xiiif--get json 'label)
+   :summary (or (xiiif--get json 'summary)
+                (xiiif--get json 'description))
+   :items   (xiiif--collection-raw-items json)
+   :raw     json))
+
+(defun xiiif-collection-children (collection)
+  "Return a list of `xiiif-collection-item' parsed from COLLECTION."
+  (delq nil
+        (mapcar #'xiiif-parse-collection-item
+                (xiiif-collection-items collection))))
+
+(defun xiiif-collection-title (collection)
+  "Return a short display title for COLLECTION."
+  (let ((label (xiiif-label-string (xiiif-collection-label collection))))
+    (if (string-empty-p label)
+        (or (xiiif-collection-id collection) "(untitled collection)")
+      label)))
+
+(defun xiiif-collection-item-title (item &optional index)
+  "Return a short display title for ITEM, prefixed by INDEX when non-nil."
+  (let* ((lbl (xiiif-label-string (xiiif-collection-item-label item)))
+         (lbl (if (string-empty-p lbl)
+                  (or (xiiif-collection-item-id item)
+                      "(untitled item)")
+                lbl)))
+    (if index (format "%d. %s" index lbl) lbl)))
+
+
+;;; ---------- resource detection ----------
+
+(defun xiiif-resource-kind (json)
+  "Return `manifest', `collection', or nil for JSON.
+Used by the dispatcher in `xiiif-open-manifest'."
+  (cond
+   ((xiiif-collection-p-json json) 'collection)
+   ((xiiif-manifest-p-json json)   'manifest)))
 
 (provide 'xiiif-core)
 ;;; xiiif-core.el ends here

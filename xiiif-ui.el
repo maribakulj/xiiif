@@ -29,10 +29,11 @@
 (require 'xiiif-cache)
 (require 'xiiif-image)
 
-(defconst xiiif-ui--manifest-buffer "*XIIIF Manifest*")
-(defconst xiiif-ui--canvases-buffer "*XIIIF Canvases*")
-(defconst xiiif-ui--canvas-buffer   "*XIIIF Canvas*")
-(defconst xiiif-ui--json-buffer     "*XIIIF JSON*")
+(defconst xiiif-ui--manifest-buffer   "*XIIIF Manifest*")
+(defconst xiiif-ui--canvases-buffer   "*XIIIF Canvases*")
+(defconst xiiif-ui--canvas-buffer     "*XIIIF Canvas*")
+(defconst xiiif-ui--collection-buffer "*XIIIF Collection*")
+(defconst xiiif-ui--json-buffer       "*XIIIF JSON*")
 
 (defface xiiif-heading
   '((t :inherit font-lock-function-name-face :weight bold))
@@ -305,6 +306,94 @@ Prompts for size and destination; other parameters take defaults."
     (message "Downloading...")
     (xiiif-image-download canvas destination :size size :format format)
     (message "Saved %s" destination)))
+
+
+;;; ---------- collection browser ----------
+
+(declare-function xiiif-open-manifest "xiiif" (url))
+
+(defvar xiiif-collection-mode-map
+  (let ((map (make-sparse-keymap)))
+    (define-key map (kbd "RET") #'xiiif-ui--open-collection-item-at-point)
+    (define-key map (kbd "o")   #'xiiif-ui--open-collection-item-at-point)
+    (define-key map (kbd "y")   #'xiiif-ui--copy-collection-item-url-at-point)
+    (define-key map (kbd "i")   #'xiiif-ui--insert-collection-item-org-link-at-point)
+    (define-key map (kbd "g")   #'xiiif-refresh)
+    (define-key map (kbd "J")   #'xiiif-show-raw-json)
+    (define-key map (kbd "q")   #'quit-window)
+    map)
+  "Keymap for `xiiif-collection-mode'.")
+
+(define-derived-mode xiiif-collection-mode tabulated-list-mode "XIIIF-Collection"
+  "Major mode for browsing the children of a IIIF Collection."
+  (setq tabulated-list-format
+        [("#"     4  nil :right-align t)
+         ("Type"  12 t)
+         ("Label" 60 t)])
+  (setq tabulated-list-padding 2)
+  (setq tabulated-list-sort-key nil)
+  (tabulated-list-init-header))
+
+(defvar-local xiiif-ui--collection nil
+  "The `xiiif-collection' backing the current collection buffer.")
+
+(defun xiiif-ui--collection-row (index item)
+  "Build a tabulated-list row from INDEX and ITEM."
+  (list item
+        (vector (number-to-string index)
+                (or (xiiif-collection-item-type item) "?")
+                (xiiif-collection-item-title item))))
+
+(defun xiiif-ui-render-collection (collection)
+  "Render the Collection browser for COLLECTION and display it."
+  (let ((buf (get-buffer-create xiiif-ui--collection-buffer))
+        (children (xiiif-collection-children collection)))
+    (with-current-buffer buf
+      (xiiif-collection-mode)
+      (setq-local xiiif-ui--collection collection)
+      (setq tabulated-list-entries
+            (cl-loop for item in children
+                     for i from 1
+                     collect (xiiif-ui--collection-row i item)))
+      (tabulated-list-print t))
+    (pop-to-buffer-same-window buf)
+    (message "%s  -  %d item%s   [RET] open  [y] copy  [i] org  [g] refresh  [q] quit"
+             (xiiif-collection-title collection)
+             (length children)
+             (if (= 1 (length children)) "" "s"))))
+
+(defun xiiif-ui--collection-item-at-point ()
+  "Return the `xiiif-collection-item' at point in a collection buffer, or nil."
+  (and (derived-mode-p 'xiiif-collection-mode)
+       (tabulated-list-get-id)))
+
+(defun xiiif-ui--open-collection-item-at-point ()
+  "Open the collection item at point (manifest or sub-collection)."
+  (interactive)
+  (let ((item (xiiif-ui--collection-item-at-point)))
+    (unless item (user-error "No collection item on this line"))
+    (xiiif-open-manifest (xiiif-collection-item-id item))))
+
+(defun xiiif-ui--copy-collection-item-url-at-point ()
+  "Copy the URL of the collection item at point to the kill ring."
+  (interactive)
+  (let ((item (xiiif-ui--collection-item-at-point)))
+    (unless item (user-error "No collection item on this line"))
+    (let ((url (xiiif-collection-item-id item)))
+      (unless url (user-error "Item has no URL"))
+      (kill-new url)
+      (message "Copied %s" url))))
+
+(defun xiiif-ui--insert-collection-item-org-link-at-point ()
+  "Copy an Org link for the collection item at point to the kill-ring."
+  (interactive)
+  (let ((item (xiiif-ui--collection-item-at-point)))
+    (unless item (user-error "No collection item on this line"))
+    (let* ((target (xiiif-collection-item-id item))
+           (label  (xiiif-collection-item-title item))
+           (link   (format "[[%s][%s]]" target label)))
+      (kill-new link)
+      (message "Copied to kill ring: %s" link))))
 
 
 ;;; ---------- raw JSON ----------
