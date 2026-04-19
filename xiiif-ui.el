@@ -277,7 +277,9 @@
           (insert "\n")
           (xiiif-ui--insert-heading "Default derivative")
           (xiiif-ui--insert-field "URL" (xiiif-image-url canvas)))
-        (goto-char (point-min))))
+        (goto-char (point-min)))
+      (when (boundp 'xiiif-after-render-canvas-hook)
+        (run-hook-with-args 'xiiif-after-render-canvas-hook canvas)))
     (pop-to-buffer-same-window buf)))
 
 (defvar-local xiiif-ui--canvas nil

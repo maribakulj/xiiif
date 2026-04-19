@@ -43,9 +43,10 @@ deliberately speculative.
 - **Source registry.** A small alist of named IIIF endpoints (e.g.
   Gallica, LoC, Wellcome, DPLA) with their quirks recorded once, so
   commands like `xiiif-search` could hit each.
-- **Hooks.** `xiiif-after-load-manifest-hook`,
-  `xiiif-canvas-format-functions` and friends so users can extend the
-  UI without patching the package.
+- [x] **Hooks.** `xiiif-after-load-manifest-hook`,
+  `xiiif-after-load-collection-hook' and
+  `xiiif-after-render-canvas-hook' let users extend the UI without
+  patching the package. *(shipped)*
 - **Per-server profiles.** A `xiiif-server-profile` record that can
   override default region/size/format and authentication headers.
 
