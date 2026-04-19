@@ -13,9 +13,9 @@ deliberately speculative.
   browser that recurses into members on demand. *(shipped)*
 - [ ] **Structures / ranges.** Surface `structures` (v2) and `Range`
   hierarchies (v3) as a navigable tree in a third buffer.
-- [ ] **Thumbnail preview.** When `display-graphic-p', render the
+- [x] **Thumbnail preview.** When `display-graphic-p', render the
   canvas thumbnail inline in the canvas detail buffer using
-  `create-image`.
+  `create-image`. *(shipped)*
 - [x] **info.json integration.** On demand, fetch the Image API
   `info.json` and display the advertised sizes, tiles and profile
   compliance level. *(shipped)*

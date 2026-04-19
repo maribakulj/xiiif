@@ -212,5 +212,47 @@
                            "http://x/m")
    :type 'xiiif-parse-error))
 
+
+
+;;; ---- thumbnail URL extraction ----
+
+(ert-deftest xiiif-canvas-thumbnail-url/v3-array ()
+  (let ((canvas (make-xiiif-canvas
+                 :id "http://x/c1"
+                 :thumbnail [((id . "http://x/thumb.jpg")
+                              (type . "Image"))])))
+    (should (equal "http://x/thumb.jpg"
+                   (xiiif-canvas-thumbnail-url canvas)))))
+
+(ert-deftest xiiif-canvas-thumbnail-url/v2-string ()
+  (let ((canvas (make-xiiif-canvas
+                 :id "http://x/c1"
+                 :thumbnail "http://x/thumb.jpg")))
+    (should (equal "http://x/thumb.jpg"
+                   (xiiif-canvas-thumbnail-url canvas)))))
+
+(ert-deftest xiiif-canvas-thumbnail-url/v2-object ()
+  (let ((canvas (make-xiiif-canvas
+                 :id "http://x/c1"
+                 :thumbnail '((@id . "http://x/thumb.jpg")
+                              (@type . "dctypes:Image")))))
+    (should (equal "http://x/thumb.jpg"
+                   (xiiif-canvas-thumbnail-url canvas)))))
+
+(ert-deftest xiiif-canvas-thumbnail-url/synthesized-from-service ()
+  "Canvases without a declared thumbnail fall back to an Image API derivative."
+  (let ((canvas (make-xiiif-canvas
+                 :id "http://x/c1"
+                 :image-service (make-xiiif-image-service
+                                 :id "https://example.org/iiif/image/x"))))
+    (should (equal "https://example.org/iiif/image/x/full/!200,200/0/default.jpg"
+                   (xiiif-canvas-thumbnail-url canvas)))
+    (should (equal "https://example.org/iiif/image/x/full/!512,512/0/default.jpg"
+                   (xiiif-canvas-thumbnail-url canvas "!512,512")))))
+
+(ert-deftest xiiif-canvas-thumbnail-url/nil-when-nothing ()
+  (let ((canvas (make-xiiif-canvas :id "http://x/c1")))
+    (should (null (xiiif-canvas-thumbnail-url canvas)))))
+
 (provide 'xiiif-core-test)
 ;;; xiiif-core-test.el ends here
