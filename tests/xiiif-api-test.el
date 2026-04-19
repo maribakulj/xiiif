@@ -68,5 +68,61 @@
     (should (eq 'xiiif-network-error (nth 0 captured)))
     (should (equal "not-a-url" (nth 1 captured)))))
 
+
+
+;;; ---- error hints ----
+
+(ert-deftest xiiif-api-error-hint/401 ()
+  (should (string-match-p
+           "requires authentication"
+           (xiiif-api-error-hint '(xiiif-http-error "http://x/m" 401)))))
+
+(ert-deftest xiiif-api-error-hint/403 ()
+  (should (string-match-p
+           "access denied"
+           (xiiif-api-error-hint '(xiiif-http-error "http://x/m" 403)))))
+
+(ert-deftest xiiif-api-error-hint/404 ()
+  (should (string-match-p
+           "not found"
+           (xiiif-api-error-hint '(xiiif-http-error "http://x/m" 404)))))
+
+(ert-deftest xiiif-api-error-hint/429 ()
+  (should (string-match-p
+           "rate limited"
+           (xiiif-api-error-hint '(xiiif-http-error "http://x/m" 429)))))
+
+(ert-deftest xiiif-api-error-hint/5xx ()
+  (should (string-match-p
+           "upstream error 503"
+           (xiiif-api-error-hint '(xiiif-http-error "http://x/m" 503))))
+  (should (string-match-p
+           "upstream error 500"
+           (xiiif-api-error-hint '(xiiif-http-error "http://x/m" 500)))))
+
+(ert-deftest xiiif-api-error-hint/network ()
+  (should (string-match-p
+           "network error for http://x/m: connection refused"
+           (xiiif-api-error-hint
+            '(xiiif-network-error "http://x/m" "connection refused")))))
+
+(ert-deftest xiiif-api-error-hint/parse ()
+  (should (string-match-p
+           "could not parse http://x/m"
+           (xiiif-api-error-hint
+            '(xiiif-parse-error "http://x/m" "unexpected token")))))
+
+(ert-deftest xiiif-api-error-hint/unknown ()
+  (should (string-match-p
+           "some-weird-error"
+           (xiiif-api-error-hint '(some-weird-error "http://x/m")))))
+
+(ert-deftest xiiif-api--default-errback/records-last ()
+  "The default errback stores the incident for `xiiif-retry-last'."
+  (let ((xiiif-api-last-error nil))
+    (xiiif-api--default-errback '(xiiif-http-error "http://x/m" 404))
+    (should (equal '(xiiif-http-error "http://x/m" 404)
+                   xiiif-api-last-error))))
+
 (provide 'xiiif-api-test)
 ;;; xiiif-api-test.el ends here
