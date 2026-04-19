@@ -35,8 +35,9 @@ deliberately speculative.
   manifest metadata (title, date, rights, provider). *(shipped)*
 - **Annotation fetch.** Follow `AnnotationCollection` links from a
   canvas and show annotations in a read-only buffer.
-- **transcript/ALTO sidecars.** When a canvas links OCR or ALTO, offer
-  to view the text in a side window.
+- [x] **transcript/ALTO sidecars.** When a canvas's `seeAlso' links
+  OCR (ALTO / hOCR / plain text), fetch it and display extracted
+  text in a dedicated sidecar buffer. *(shipped)*
 
 ## 0.4 — extensibility
 
