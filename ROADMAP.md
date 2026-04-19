@@ -13,9 +13,9 @@ deliberately speculative.
   browser that recurses into members on demand. *(shipped)*
 - [ ] **Structures / ranges.** Surface `structures` (v2) and `Range`
   hierarchies (v3) as a navigable tree in a third buffer.
-- [ ] **Thumbnail preview.** When `display-graphic-p', render the
+- [x] **Thumbnail preview.** When `display-graphic-p', render the
   canvas thumbnail inline in the canvas detail buffer using
-  `create-image`.
+  `create-image`. *(shipped)*
 - [x] **info.json integration.** On demand, fetch the Image API
   `info.json` and display the advertised sizes, tiles and profile
   compliance level. *(shipped)*
@@ -25,28 +25,29 @@ deliberately speculative.
 
 ## 0.3 — DH / GLAM conveniences
 
-- **Bulk derivative export.** Mark canvases in the browser and dump
-  all selected derivatives to a directory with a uniform naming
-  scheme.
+- [x] **Bulk derivative export.** Mark canvases in the browser and
+  dump all selected derivatives to a directory with a uniform naming
+  scheme. *(shipped)*
 - **Org-capture template.** Ship an `org-capture` template that
   produces a standard note from a manifest, ready to drop in a
   research journal.
-- **Citation export.** Generate BibTeX / CSL-JSON entries from
-  manifest metadata (title, date, rights, provider).
+- [x] **Citation export.** Generate BibTeX / CSL-JSON entries from
+  manifest metadata (title, date, rights, provider). *(shipped)*
 - **Annotation fetch.** Follow `AnnotationCollection` links from a
   canvas and show annotations in a read-only buffer.
-- **transcript/ALTO sidecars.** When a canvas links OCR or ALTO, offer
-  to view the text in a side window.
+- [x] **transcript/ALTO sidecars.** When a canvas's `seeAlso' links
+  OCR (ALTO / hOCR / plain text), fetch it and display extracted
+  text in a dedicated sidecar buffer. *(shipped)*
 
 ## 0.4 — extensibility
 
-- **Source registry.** A small alist of named IIIF endpoints (e.g.
-  Gallica, LoC, Wellcome, DPLA) with their quirks recorded once, so
-  commands like `xiiif-search` could hit each.
-- [x] **Hooks.** `xiiif-after-load-manifest-hook`,
-  `xiiif-after-load-collection-hook' and
-  `xiiif-after-render-canvas-hook' let users extend the UI without
-  patching the package. *(shipped)*
+- [x] **Source registry.** An alist of named IIIF endpoints
+  (Gallica, Wellcome, Internet Archive by default) with identifier
+  prompts and URL templates.  `xiiif-open-source' picks one and
+  dispatches through `xiiif-open-manifest'. *(shipped)*
+- **Hooks.** `xiiif-after-load-manifest-hook`,
+  `xiiif-canvas-format-functions` and friends so users can extend the
+  UI without patching the package.
 - **Per-server profiles.** A `xiiif-server-profile` record that can
   override default region/size/format and authentication headers.
 
