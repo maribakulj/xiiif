@@ -80,37 +80,79 @@ Falls back to `xiiif-current-canvas' when no buffer context applies."
       (user-error "No canvas selected; open one with `xiiif-open-canvas'")))
 
 (defun xiiif--fetch-and-parse (url)
-  "Fetch URL and return a parsed `xiiif-manifest'."
+  "Fetch URL synchronously and return a parsed `xiiif-manifest'.
+Kept as an escape hatch for scripting; interactive commands use
+the asynchronous path via `xiiif--load-manifest-async'."
   (let ((json (xiiif-api-fetch-json url)))
     (xiiif-parse-manifest json url)))
+
+(defun xiiif--load-resource-async (url on-manifest on-collection)
+  "Fetch URL asynchronously and dispatch to ON-MANIFEST or ON-COLLECTION.
+The right callback is chosen by `xiiif-resource-kind'.  If JSON is
+neither a Manifest nor a Collection, a message is shown and no
+callback is invoked.  Errors are reported via `message'."
+  (message "xiiif: fetching %s..." url)
+  (xiiif-api-fetch-json-async
+   url
+   (lambda (json)
+     (condition-case err
+         (pcase (xiiif-resource-kind json)
+           ('manifest   (funcall on-manifest
+                                 (xiiif-parse-manifest json url)))
+           ('collection (funcall on-collection
+                                 (xiiif-parse-collection json url)))
+           (_ (message "xiiif: %s is neither a Manifest nor a Collection"
+                       url)))
+       (xiiif-parse-error
+        (message "xiiif: could not parse %s (%s)"
+                 url (or (nth 2 err) "parse error")))
+       (error
+        (message "xiiif: failed to render %s: %s"
+                 url (error-message-string err)))))
+   (lambda (err)
+     (pcase-let* ((`(,sym ,u . ,rest) err))
+       (pcase sym
+         ('xiiif-http-error
+          (message "xiiif: HTTP %s for %s" (car rest) u))
+         (_
+          (message "xiiif: %s for %s%s"
+                   sym u
+                   (if rest (format ": %s" (car rest)) ""))))))))
 
 
 ;;; ---------- user-facing commands ----------
 
 ;;;###autoload
 (defun xiiif-open-manifest (url)
-  "Fetch the IIIF Manifest at URL and display its overview buffer."
+  "Fetch the IIIF resource at URL asynchronously and show its primary buffer.
+
+Despite the name (kept for back-compat), this command auto-detects
+whether URL points at a Manifest or a Collection and dispatches to
+the appropriate buffer."
   (interactive
-   (list (read-string "IIIF Manifest URL: "
+   (list (read-string "IIIF Manifest or Collection URL: "
                       (car xiiif-recent-manifests))))
-  (message "Fetching %s..." url)
-  (condition-case err
-      (let ((manifest (xiiif--fetch-and-parse url)))
-        (xiiif-cache-set-manifest manifest)
-        (xiiif-cache-set-canvas nil)
-        (xiiif-ui-render-manifest manifest)
-        (message "Loaded %s (%d canvas%s)"
-                 (xiiif-manifest-title manifest)
-                 (length (xiiif-manifest-canvases manifest))
-                 (if (= 1 (length (xiiif-manifest-canvases manifest))) "" "es")))
-    (xiiif-network-error
-     (user-error "Network error for %s: %s"
-                 (nth 1 err) (or (nth 2 err) "unknown")))
-    (xiiif-http-error
-     (user-error "HTTP %s for %s" (nth 2 err) (nth 1 err)))
-    (xiiif-parse-error
-     (user-error "Could not parse %s: %s"
-                 (nth 1 err) (or (nth 2 err) "unknown")))))
+  (xiiif--load-resource-async
+   url
+   (lambda (manifest)
+     (xiiif-cache-set-manifest manifest)
+     (xiiif-cache-set-canvas nil)
+     (xiiif-ui-render-manifest manifest)
+     (let ((n (length (xiiif-manifest-canvases manifest))))
+       (message "xiiif: loaded %s (%d canvas%s)"
+                (xiiif-manifest-title manifest)
+                n (if (= 1 n) "" "es"))))
+   (lambda (collection)
+     (xiiif-cache-set-collection collection)
+     (xiiif-ui-render-collection collection)
+     (let ((n (length (xiiif-collection-children collection))))
+       (message "xiiif: loaded collection %s (%d item%s)"
+                (xiiif-collection-title collection)
+                n (if (= 1 n) "" "s"))))))
+
+;;;###autoload
+(defalias 'xiiif-open #'xiiif-open-manifest
+  "Alias for `xiiif-open-manifest', whose name predates Collection support.")
 
 ;;;###autoload
 (defun xiiif-browse-canvases ()
@@ -159,6 +201,21 @@ quality and format instead of using defaults."
   (xiiif-ui-download-canvas-image (xiiif--require-canvas)))
 
 ;;;###autoload
+(defun xiiif-show-info-json (&optional target)
+  "Fetch and display the Image API info.json for TARGET.
+TARGET may be a URL string, a `xiiif-image-service', a `xiiif-canvas',
+or nil to use the contextual canvas."
+  (interactive)
+  (let ((service (or target (xiiif--require-canvas))))
+    (message "xiiif: fetching info.json...")
+    (xiiif-image-fetch-info-async
+     service
+     (lambda (info)
+       (xiiif-ui-render-info info)
+       (message "xiiif: loaded info.json for %s"
+                (or (xiiif-image-info-id info) "image service"))))))
+
+;;;###autoload
 (defun xiiif-copy-manifest-url ()
   "Copy the URL of the current manifest to the kill ring."
   (interactive)
@@ -193,7 +250,9 @@ called interactively, the user is prompted."
 
 ;;;###autoload
 (defun xiiif-show-raw-json ()
-  "Show the raw JSON of the current context (manifest or canvas)."
+  "Show the raw JSON of the current xiiif context.
+Picks canvas, manifest, collection item or collection automatically
+based on the active buffer."
   (interactive)
   (cond
    ((derived-mode-p 'xiiif-canvas-mode)
@@ -203,42 +262,88 @@ called interactively, the user is prompted."
          (tabulated-list-get-id))
     (let ((c (tabulated-list-get-id)))
       (xiiif-ui-show-json (xiiif-canvas-raw c) (xiiif-canvas-title c))))
-   (t
-    (let ((m (xiiif--require-manifest)))
-      (xiiif-ui-show-json (xiiif-manifest-raw m) (xiiif-manifest-title m))))))
+   ((derived-mode-p 'xiiif-collection-mode)
+    (let ((c (or (tabulated-list-get-id) xiiif-ui--collection)))
+      (cond
+       ((xiiif-collection-item-p c)
+        (xiiif-ui-show-json
+         `((id . ,(xiiif-collection-item-id c))
+           (type . ,(xiiif-collection-item-type c))
+           (label . ,(xiiif-collection-item-label c)))
+         (xiiif-collection-item-title c)))
+       ((xiiif-collection-p c)
+        (xiiif-ui-show-json (xiiif-collection-raw c)
+                            (xiiif-collection-title c))))))
+   (xiiif-current-manifest
+    (xiiif-ui-show-json (xiiif-manifest-raw xiiif-current-manifest)
+                        (xiiif-manifest-title xiiif-current-manifest)))
+   (xiiif-current-collection
+    (xiiif-ui-show-json (xiiif-collection-raw xiiif-current-collection)
+                        (xiiif-collection-title xiiif-current-collection)))
+   (t (user-error "No xiiif context to show JSON for"))))
+
+(defun xiiif--refresh-source ()
+  "Return (URL . MODE) for what `xiiif-refresh' should re-fetch.
+URL is the source URL of the resource feeding the current buffer.
+Signals `user-error' if there is nothing to refresh."
+  (let ((mode major-mode))
+    (cond
+     ((eq mode 'xiiif-collection-mode)
+      (cons (xiiif-collection-url
+             (or xiiif-ui--collection
+                 (or xiiif-current-collection
+                     (user-error "No collection in this buffer to refresh"))))
+            mode))
+     ((or (memq mode '(xiiif-manifest-mode xiiif-canvas-list-mode xiiif-canvas-mode))
+          xiiif-current-manifest)
+      (cons (xiiif-manifest-url
+             (or xiiif-current-manifest
+                 (user-error "No manifest to refresh")))
+            mode))
+     (t (user-error "Nothing to refresh in this buffer")))))
 
 ;;;###autoload
 (defun xiiif-refresh ()
-  "Re-fetch the current manifest and redisplay the active buffer."
+  "Re-fetch the current resource asynchronously and redisplay.
+Works for the manifest overview, the canvas browser, the canvas
+detail buffer (re-resolved by id) and the collection browser."
   (interactive)
-  (let* ((m (xiiif--require-manifest))
-         (url (xiiif-manifest-url m)))
-    (unless url (user-error "Current manifest has no URL to refresh"))
-    (let ((fresh (xiiif--fetch-and-parse url)))
-      (xiiif-cache-set-manifest fresh)
-      (cond
-       ((derived-mode-p 'xiiif-canvas-list-mode)
-        (xiiif-ui-render-canvases fresh))
-       ((derived-mode-p 'xiiif-canvas-mode)
-        ;; Re-resolve by ID when possible.
-        (let* ((id (and xiiif-ui--canvas (xiiif-canvas-id xiiif-ui--canvas)))
-               (match (and id (cl-find id (xiiif-manifest-canvases fresh)
-                                       :key #'xiiif-canvas-id :test #'equal))))
-          (if match
-              (progn (xiiif-cache-set-canvas match)
-                     (xiiif-ui-render-canvas match))
-            (xiiif-ui-render-manifest fresh))))
-       (t (xiiif-ui-render-manifest fresh)))
-      (message "Refreshed %s" (xiiif-manifest-title fresh)))))
+  (pcase-let* ((`(,url . ,mode) (xiiif--refresh-source))
+               (canvas-id (and (eq mode 'xiiif-canvas-mode)
+                               xiiif-ui--canvas
+                               (xiiif-canvas-id xiiif-ui--canvas))))
+    (unless url
+      (user-error "Current resource has no URL to refresh"))
+    (xiiif--load-resource-async
+     url
+     (lambda (fresh)
+       (xiiif-cache-set-manifest fresh)
+       (cond
+        ((eq mode 'xiiif-canvas-list-mode)
+         (xiiif-ui-render-canvases fresh))
+        ((eq mode 'xiiif-canvas-mode)
+         (let ((match (and canvas-id
+                           (cl-find canvas-id (xiiif-manifest-canvases fresh)
+                                    :key #'xiiif-canvas-id :test #'equal))))
+           (if match
+               (progn (xiiif-cache-set-canvas match)
+                      (xiiif-ui-render-canvas match))
+             (xiiif-ui-render-manifest fresh))))
+        (t (xiiif-ui-render-manifest fresh)))
+       (message "xiiif: refreshed %s" (xiiif-manifest-title fresh)))
+     (lambda (fresh)
+       (xiiif-cache-set-collection fresh)
+       (xiiif-ui-render-collection fresh)
+       (message "xiiif: refreshed %s" (xiiif-collection-title fresh))))))
 
 ;;;###autoload
 (defun xiiif-open-recent ()
-  "Pick a recently opened manifest URL and open it."
+  "Pick a recently opened IIIF resource URL and open it."
   (interactive)
   (xiiif-cache-load)
   (unless xiiif-recent-manifests
-    (user-error "No recent IIIF manifests"))
-  (let ((url (completing-read "Recent manifest: "
+    (user-error "No recent IIIF resources"))
+  (let ((url (completing-read "Recent IIIF resource: "
                               xiiif-recent-manifests nil t)))
     (xiiif-open-manifest url)))
 

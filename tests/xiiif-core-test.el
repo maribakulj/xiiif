@@ -18,13 +18,26 @@
    "../examples/sample-manifest.json"
    (file-name-directory (or load-file-name buffer-file-name))))
 
-(defun xiiif-test--load-fixture ()
-  "Return the sample manifest parsed into an alist."
+(defconst xiiif-test--collection-fixture
+  (expand-file-name
+   "../examples/sample-collection.json"
+   (file-name-directory (or load-file-name buffer-file-name))))
+
+(defun xiiif-test--read-json (path)
+  "Return PATH parsed as JSON in the alist shape xiiif uses."
   (let ((json-object-type 'alist)
         (json-array-type  'vector)
         (json-key-type    'symbol)
         (json-null        nil))
-    (json-read-file xiiif-test--fixture)))
+    (json-read-file path)))
+
+(defun xiiif-test--load-fixture ()
+  "Return the sample manifest parsed into an alist."
+  (xiiif-test--read-json xiiif-test--fixture))
+
+(defun xiiif-test--load-collection-fixture ()
+  "Return the sample collection parsed into an alist."
+  (xiiif-test--read-json xiiif-test--collection-fixture))
 
 ;;; ---- label string ----
 
@@ -131,6 +144,73 @@
   (let* ((raw '((id . "http://x/m") (type . "Manifest") (label . "x")))
          (m (xiiif-parse-manifest raw "http://x/m")))
     (should (null (xiiif-manifest-canvases m)))))
+
+
+
+;;; ---- collections ----
+
+(ert-deftest xiiif-collection-p-json/detects-v3 ()
+  (should (xiiif-collection-p-json
+           (xiiif-test--load-collection-fixture))))
+
+(ert-deftest xiiif-collection-p-json/detects-v2 ()
+  (should (xiiif-collection-p-json
+           '((@id . "http://x/c") (@type . "sc:Collection")))))
+
+(ert-deftest xiiif-resource-kind/dispatches ()
+  (should (eq 'collection
+              (xiiif-resource-kind
+               (xiiif-test--load-collection-fixture))))
+  (should (eq 'manifest
+              (xiiif-resource-kind
+               (xiiif-test--load-fixture))))
+  (should (null (xiiif-resource-kind '((foo . "bar"))))))
+
+(ert-deftest xiiif-parse-collection/v3-children ()
+  (let* ((c (xiiif-parse-collection
+             (xiiif-test--load-collection-fixture)
+             "https://example.org/iiif/collection/top"))
+         (children (xiiif-collection-children c)))
+    (should (xiiif-collection-p c))
+    (should (equal "Sample Top-Level Collection"
+                   (xiiif-collection-title c)))
+    (should (= 3 (length children)))
+    (let ((first (car children)))
+      (should (equal "Manifest"
+                     (xiiif-collection-item-type first)))
+      (should (equal "A Sample Illuminated Book"
+                     (xiiif-collection-item-title first))))
+    (let ((third (nth 2 children)))
+      (should (equal "Collection"
+                     (xiiif-collection-item-type third))))))
+
+(ert-deftest xiiif-parse-collection/v2-merges-collections-and-manifests ()
+  (let* ((v2 '((@id . "http://x/c")
+               (@type . "sc:Collection")
+               (label . "Coll")
+               (collections . [((@id . "http://x/c1")
+                                (@type . "sc:Collection")
+                                (label . "Sub"))])
+               (manifests . [((@id . "http://x/m1")
+                              (@type . "sc:Manifest")
+                              (label . "M1"))
+                             ((@id . "http://x/m2")
+                              (@type . "sc:Manifest")
+                              (label . "M2"))])))
+         (c (xiiif-parse-collection v2 "http://x/c"))
+         (children (xiiif-collection-children c)))
+    (should (= 3 (length children)))
+    ;; Sub-collections come first by convention.
+    (should (equal "Collection"
+                   (xiiif-collection-item-type (car children))))
+    (should (equal "M1"
+                   (xiiif-collection-item-title (nth 1 children))))))
+
+(ert-deftest xiiif-parse-collection/rejects-non-collection ()
+  (should-error
+   (xiiif-parse-collection (xiiif-test--load-fixture)
+                           "http://x/m")
+   :type 'xiiif-parse-error))
 
 (provide 'xiiif-core-test)
 ;;; xiiif-core-test.el ends here

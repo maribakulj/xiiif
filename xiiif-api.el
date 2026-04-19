@@ -9,10 +9,13 @@
 ;;; Commentary:
 
 ;; Thin wrapper around `url.el' that fetches a IIIF resource and
-;; returns it as a parsed JSON value (alist).  All transport,
-;; HTTP-status and JSON-decode errors are translated into the
-;; dedicated `xiiif-' error symbols defined here, so higher layers
-;; only need to handle well-typed failures.
+;; returns it as a parsed JSON value (alist).  Exposes both a
+;; synchronous helper (`xiiif-api-fetch-json', useful for scripting
+;; and tests) and a non-blocking version (`xiiif-api-fetch-json-async',
+;; used by all interactive commands so Emacs stays responsive on slow
+;; manifests).  All transport, HTTP-status and JSON-decode errors are
+;; translated into the dedicated `xiiif-' error symbols defined here,
+;; so higher layers only need to handle well-typed failures.
 
 ;;; Code:
 
@@ -73,17 +76,31 @@ Point must be at the beginning of the buffer.  Returns an integer or nil."
      (signal 'xiiif-parse-error
              (list url (error-message-string err))))))
 
+(defun xiiif-api--response-json (url)
+  "Parse the current `url' response buffer as IIIF JSON for URL.
+Signals `xiiif-http-error' on non-2xx responses and
+`xiiif-parse-error' on invalid JSON."
+  (let ((status (xiiif-api--status-code)))
+    (when (and status (or (< status 200) (>= status 400)))
+      (signal 'xiiif-http-error (list url status)))
+    (xiiif-api--parse-json (xiiif-api--decode-body) url)))
+
+(defun xiiif-api--request-headers ()
+  "Return the HTTP request header alist used by every xiiif call."
+  `(("Accept"     . "application/ld+json, application/json")
+    ("User-Agent" . ,xiiif-api-user-agent)))
+
 (defun xiiif-api-fetch-json (url)
   "Fetch URL synchronously and return parsed JSON.
 
 Signals `xiiif-network-error' on transport failure,
 `xiiif-http-error' on non-2xx responses, and
-`xiiif-parse-error' on invalid JSON."
+`xiiif-parse-error' on invalid JSON.
+
+For a non-blocking version, see `xiiif-api-fetch-json-async'."
   (unless (xiiif-api--valid-url-p url)
     (signal 'xiiif-network-error (list url "invalid URL")))
-  (let* ((url-request-extra-headers
-          `(("Accept" . "application/ld+json, application/json")
-            ("User-Agent" . ,xiiif-api-user-agent)))
+  (let* ((url-request-extra-headers (xiiif-api--request-headers))
          (url-mime-accept-string
           "application/ld+json, application/json")
          (buffer (condition-case err
@@ -96,11 +113,61 @@ Signals `xiiif-network-error' on transport failure,
           (unless (buffer-live-p buffer)
             (signal 'xiiif-network-error (list url "no response")))
           (with-current-buffer buffer
-            (let ((status (xiiif-api--status-code)))
-              (when (and status (or (< status 200) (>= status 400)))
-                (signal 'xiiif-http-error (list url status)))
-              (xiiif-api--parse-json (xiiif-api--decode-body) url))))
+            (xiiif-api--response-json url)))
       (when (buffer-live-p buffer) (kill-buffer buffer)))))
+
+(defun xiiif-api--default-errback (err)
+  "Default async error reporter: show a compact `message'.
+ERR is the list (ERROR-SYMBOL URL &rest DATA)."
+  (pcase-let* ((`(,sym ,url . ,rest) err))
+    (message "xiiif: %s for %s%s"
+             (or sym 'xiiif-error)
+             (or url "?")
+             (if rest (format ": %s" (car rest)) ""))))
+
+(defun xiiif-api-fetch-json-async (url callback &optional errback)
+  "Fetch URL asynchronously.
+
+On success, CALLBACK is called with the parsed JSON value.
+On failure, ERRBACK is called with a list (ERROR-SYMBOL URL &rest DATA);
+when ERRBACK is nil, `xiiif-api--default-errback' shows a message.
+
+Returns immediately; the HTTP request runs in the background.  Both
+CALLBACK and ERRBACK run on Emacs's main thread, so they may update
+buffers and UI directly."
+  (let ((errback (or errback #'xiiif-api--default-errback)))
+    (if (not (xiiif-api--valid-url-p url))
+        (funcall errback (list 'xiiif-network-error url "invalid URL"))
+      (let ((url-request-extra-headers (xiiif-api--request-headers))
+            (url-mime-accept-string
+             "application/ld+json, application/json"))
+        (condition-case err
+            (url-retrieve
+             url
+             (lambda (status)
+               (let ((response-buffer (current-buffer)))
+                 (unwind-protect
+                     (condition-case handler-err
+                         (let ((net-err (plist-get status :error)))
+                           (when net-err
+                             (signal 'xiiif-network-error
+                                     (list url (error-message-string
+                                                net-err))))
+                           (funcall callback
+                                    (xiiif-api--response-json url)))
+                       (xiiif-error
+                        (funcall errback handler-err))
+                       (error
+                        (funcall errback
+                                 (list 'xiiif-error url
+                                       (error-message-string handler-err)))))
+                   (when (buffer-live-p response-buffer)
+                     (kill-buffer response-buffer)))))
+             nil t t)
+          (error
+           (funcall errback
+                    (list 'xiiif-network-error url
+                          (error-message-string err)))))))))
 
 (defun xiiif-api-download-file (url destination)
   "Download URL to DESTINATION, overwriting if it exists.

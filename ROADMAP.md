@@ -6,20 +6,22 @@ deliberately speculative.
 
 ## 0.2 — fill in the obvious gaps
 
-- **Asynchronous fetch.** Replace `url-retrieve-synchronously` with a
-  non-blocking flow that keeps Emacs responsive on slow manifests.
-- **Collections.** Detect `type: "Collection"` and render a browser
-  that recurses into members on demand.
-- **Structures / ranges.** Surface `structures` (v2) and `Range`
+- [x] **Asynchronous fetch.** Replace `url-retrieve-synchronously`
+  with a non-blocking flow that keeps Emacs responsive on slow
+  manifests. *(shipped)*
+- [x] **Collections.** Detect `type: "Collection"` and render a
+  browser that recurses into members on demand. *(shipped)*
+- [ ] **Structures / ranges.** Surface `structures` (v2) and `Range`
   hierarchies (v3) as a navigable tree in a third buffer.
-- **Thumbnail preview.** When `display-graphic-p`, render the canvas
-  thumbnail inline in the canvas detail buffer using `create-image`.
-- **info.json integration.** On demand, fetch the Image API
+- [ ] **Thumbnail preview.** When `display-graphic-p', render the
+  canvas thumbnail inline in the canvas detail buffer using
+  `create-image`.
+- [x] **info.json integration.** On demand, fetch the Image API
   `info.json` and display the advertised sizes, tiles and profile
-  compliance level.
-- **Better error surfaces.** Distinguish 401/403/404 from transport
-  errors with tailored messages, and remember the offending URL for a
-  one-key retry.
+  compliance level. *(shipped)*
+- [ ] **Better error surfaces.** Distinguish 401/403/404 from
+  transport errors with tailored messages, and remember the offending
+  URL for a one-key retry.
 
 ## 0.3 — DH / GLAM conveniences
 

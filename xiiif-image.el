@@ -14,6 +14,12 @@
 ;; resulting derivative.  Defaults match the spec: full / max / 0 /
 ;; default / jpg.  No attempt is made to detect server compliance;
 ;; the builder trusts the caller.
+;;
+;; Also exposes a small wrapper around the Image API `info.json'
+;; document: fetch it (sync or async), and parse it into a
+;; `xiiif-image-info' struct that surfaces the advertised sizes,
+;; tiles and compliance level for callers that want to adapt to
+;; server capabilities.
 
 ;;; Code:
 
@@ -112,6 +118,103 @@ the absolute path of the downloaded file."
       (when (and dir (not (file-directory-p dir)))
         (make-directory dir t)))
     (xiiif-api-download-file url (expand-file-name destination))))
+
+
+
+;;; ---------- info.json ----------
+
+(cl-defstruct xiiif-image-info
+  "Normalized IIIF Image API `info.json' descriptor."
+  id type protocol profile width height sizes tiles
+  preferred-formats formats qualities extra-features rights raw)
+
+(defun xiiif-image-parse-info (json &optional url)
+  "Parse a JSON `info.json' alist into a `xiiif-image-info'.
+
+URL is the URL the document was fetched from.  When the document
+omits its own id, a best-effort service base is derived from URL by
+stripping a trailing `/info.json' segment."
+  (unless (consp json)
+    (signal 'xiiif-parse-error (list (or url "info.json") "not an object")))
+  (make-xiiif-image-info
+   :id                (or (xiiif--get json 'id)
+                          (and url
+                               (replace-regexp-in-string
+                                "/info\\.json\\'" "" url)))
+   :type              (xiiif--normalize-type (xiiif--get json 'type))
+   :protocol          (xiiif--get json 'protocol)
+   :profile           (xiiif--get json 'profile)
+   :width             (xiiif--get json 'width)
+   :height            (xiiif--get json 'height)
+   :sizes             (xiiif--as-list (xiiif--get json 'sizes))
+   :tiles             (xiiif--as-list (xiiif--get json 'tiles))
+   :preferred-formats (xiiif--as-list (xiiif--get json 'preferredFormats))
+   :formats           (xiiif--as-list (xiiif--get json 'formats))
+   :qualities         (xiiif--as-list (xiiif--get json 'qualities))
+   :extra-features    (xiiif--as-list (xiiif--get json 'extraFeatures))
+   :rights            (xiiif--get json 'rights)
+   :raw               json))
+
+(defun xiiif-image-info-compliance-level (info)
+  "Return a short compliance level string for INFO, or nil.
+
+For IIIF Image API 3 this is the bare `profile' (e.g. \"level1\").
+For API 2 the profile is a URI or a mixed array of URIs and
+extension objects; the URI is truncated to its `levelN' suffix."
+  (cl-labels ((pick (val)
+                (cond
+                 ((null val) nil)
+                 ((stringp val)
+                  (cond
+                   ((string-match "level\\([0-2]\\)" val) (match-string 0 val))
+                   ((member val '("level0" "level1" "level2")) val)
+                   (t val)))
+                 ((vectorp val) (pick (and (> (length val) 0) (aref val 0))))
+                 ((listp val)   (pick (car val))))))
+    (pick (xiiif-image-info-profile info))))
+
+(defun xiiif-image-info-size-strings (info)
+  "Return a list of \"WxH\" strings for the advertised sizes of INFO."
+  (cl-loop for s in (xiiif-image-info-sizes info)
+           for w = (xiiif--get s 'width)
+           for h = (xiiif--get s 'height)
+           when (and w h) collect (format "%sx%s" w h)))
+
+(defun xiiif-image-info-tile-strings (info)
+  "Return a list of short descriptions of the advertised tile schemes of INFO."
+  (cl-loop for tile in (xiiif-image-info-tiles info)
+           for w = (xiiif--get tile 'width)
+           for h = (or (xiiif--get tile 'height) w)
+           for sf = (xiiif--get tile 'scaleFactors)
+           collect (format "%sx%s  scaleFactors=%s"
+                           (or w "?") (or h "?")
+                           (if sf
+                               (mapconcat #'number-to-string
+                                          (xiiif--as-list sf) ",")
+                             "-"))))
+
+(defun xiiif-image-fetch-info (service)
+  "Fetch and parse the `info.json' for SERVICE synchronously.
+SERVICE is a `xiiif-image-service', a `xiiif-canvas', or a base URL.
+Returns a `xiiif-image-info' or signals an `xiiif-' error."
+  (let ((url (xiiif-image-info-url service)))
+    (unless url (signal 'xiiif-error (list "no info.json URL")))
+    (xiiif-image-parse-info (xiiif-api-fetch-json url) url)))
+
+(defun xiiif-image-fetch-info-async (service callback &optional errback)
+  "Fetch the `info.json' for SERVICE asynchronously.
+On success, CALLBACK is called with a `xiiif-image-info'.  On
+failure, ERRBACK is called with (ERROR-SYMBOL URL &rest DATA);
+defaults to the same reporter used by `xiiif-api-fetch-json-async'."
+  (let ((url (xiiif-image-info-url service)))
+    (if (not url)
+        (funcall (or errback #'xiiif-api--default-errback)
+                 (list 'xiiif-error nil "no info.json URL"))
+      (xiiif-api-fetch-json-async
+       url
+       (lambda (json)
+         (funcall callback (xiiif-image-parse-info json url)))
+       errback))))
 
 (provide 'xiiif-image)
 ;;; xiiif-image.el ends here
