@@ -135,6 +135,11 @@ auto-detects resource type.
 `M-x xiiif-open-recent` re-opens any URL you have visited before
 (persisted across Emacs restarts).
 
+`M-x xiiif-open-source` dispatches by institution: pick from the
+built-in registry (Gallica, Wellcome, Internet Archive), type the
+local identifier, and the full manifest URL is assembled for you.
+Add your own endpoints with `customize-variable xiiif-sources`.
+
 ## Commands
 
 All commands are autoloaded.
@@ -145,6 +150,7 @@ All commands are autoloaded.
 | --------------------------- | ---------------------------------------------------------------- |
 | `xiiif-open-manifest`       | Prompt for a URL, fetch asynchronously, dispatch by type.        |
 | `xiiif-open`                | Alias for `xiiif-open-manifest`.                                 |
+| `xiiif-open-source`         | Pick a registered IIIF source and open a manifest by identifier. |
 | `xiiif-browse-canvases`     | Open the canvas browser for the current manifest.                |
 | `xiiif-open-canvas`         | Open the canvas at point or the current canvas.                  |
 | `xiiif-copy-image-url`      | Copy a derivative URL. `C-u` prompts for all parameters.         |
@@ -546,8 +552,7 @@ long-term plan. Highlights of the next sprints:
   inline thumbnail preview.
 - **0.3** — bulk derivative export, `org-capture` template, citation
   export (BibTeX / CSL-JSON), annotation fetch, OCR/ALTO sidecars.
-- **0.4** — source registry (Gallica, LoC, Wellcome, DPLA…), hooks
-  and per-server profiles.
+- **0.4** — source registry ✅, hooks, per-server profiles.
 
 ## Contributing
 
