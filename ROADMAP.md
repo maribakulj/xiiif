@@ -40,9 +40,10 @@ deliberately speculative.
 
 ## 0.4 — extensibility
 
-- **Source registry.** A small alist of named IIIF endpoints (e.g.
-  Gallica, LoC, Wellcome, DPLA) with their quirks recorded once, so
-  commands like `xiiif-search` could hit each.
+- [x] **Source registry.** An alist of named IIIF endpoints
+  (Gallica, Wellcome, Internet Archive by default) with identifier
+  prompts and URL templates.  `xiiif-open-source' picks one and
+  dispatches through `xiiif-open-manifest'. *(shipped)*
 - **Hooks.** `xiiif-after-load-manifest-hook`,
   `xiiif-canvas-format-functions` and friends so users can extend the
   UI without patching the package.

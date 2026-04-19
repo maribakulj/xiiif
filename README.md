@@ -37,6 +37,7 @@ upstream servers.
 - [Quick start](#quick-start)
 - [Commands](#commands)
 - [Buffers and keymaps](#buffers-and-keymaps)
+- [Source registry](#source-registry)
 - [Collections](#collections)
 - [IIIF Image API URLs](#iiif-image-api-urls)
 - [Org integration](#org-integration)
@@ -134,6 +135,11 @@ auto-detects resource type.
 `M-x xiiif-open-recent` re-opens any URL you have visited before
 (persisted across Emacs restarts).
 
+`M-x xiiif-open-source` dispatches by institution: pick from the
+built-in registry (Gallica, Wellcome, Internet Archive), type the
+local identifier, and the full manifest URL is assembled for you.
+Add your own endpoints with `customize-variable xiiif-sources`.
+
 ## Commands
 
 All commands are autoloaded.
@@ -144,6 +150,7 @@ All commands are autoloaded.
 | --------------------------- | ---------------------------------------------------------------- |
 | `xiiif-open-manifest`       | Prompt for a URL, fetch asynchronously, dispatch by type.        |
 | `xiiif-open`                | Alias for `xiiif-open-manifest`.                                 |
+| `xiiif-open-source`         | Pick a registered IIIF source and open a manifest by identifier. |
 | `xiiif-browse-canvases`     | Open the canvas browser for the current manifest.                |
 | `xiiif-open-canvas`         | Open the canvas at point or the current canvas.                  |
 | `xiiif-copy-image-url`      | Copy a derivative URL. `C-u` prompts for all parameters.         |
@@ -194,6 +201,32 @@ Common bindings:
 buffer is writable (like an Org buffer you've switched to), the link
 is inserted at point; when called from a read-only xiiif buffer, the
 link is placed on the kill-ring with a notification, ready to yank.
+
+## Source registry
+
+`xiiif-sources` is an alist of named IIIF endpoints.  Each entry
+declares a `:label`, an identifier `:prompt`, and either a
+`:manifest-url` template (a `format` string with `%s` for the id)
+or a `:manifest-url-fn` function of the id.
+
+Built-in entries:
+
+| Name       | Example identifier                           | URL built                                             |
+| ---------- | -------------------------------------------- | ----------------------------------------------------- |
+| `gallica`  | `ark:/12148/btv1b84539771`                   | `https://gallica.bnf.fr/iiif/%s/manifest.json`        |
+| `wellcome` | `b19974760`                                  | `https://iiif.wellcomecollection.org/presentation/%s` |
+| `ia`       | `stories-of-king-arthur-for-boys-and-girls`  | `https://iiif.archivelab.org/iiif/%s/manifest.json`   |
+
+Add your own with:
+
+```elisp
+(add-to-list 'xiiif-sources
+             '(mylibrary
+               :label "My Library"
+               :prompt "Local shelf mark: "
+               :manifest-url "https://iiif.example.org/manifests/%s"
+               :notes "Internal staging environment."))
+```
 
 ## Collections
 
@@ -336,6 +369,7 @@ xiiif/
   xiiif-image.el    ; IIIF Image API URL builder, download
   xiiif-ui.el       ; major modes & buffers
   xiiif-org.el      ; Org link / metadata insertion
+  xiiif-sources.el  ; named IIIF endpoint registry
   tests/            ; ERT tests
   examples/         ; sample manifest + collection fixtures
 ```
@@ -349,6 +383,7 @@ xiiif/
 | `xiiif-image`   | `xiiif-image-url`, `xiiif-image-info-url`, `xiiif-image-download`, `xiiif-image-fetch-info`, `xiiif-image-fetch-info-async`, and the `xiiif-image-info` parser. |
 | `xiiif-ui`      | Five derived modes; renders all xiiif buffers. |
 | `xiiif-org`     | `xiiif-org-insert-*` and the underlying link / metadata-block helpers. |
+| `xiiif-sources` | `xiiif-sources` registry, `xiiif-source-build-manifest-url`, `xiiif-sources-read`. |
 
 ## Customization
 
@@ -432,6 +467,7 @@ emacs -batch -L . -L tests \
       -l tests/xiiif-api-test.el \
       -l tests/xiiif-core-test.el \
       -l tests/xiiif-image-test.el \
+      -l tests/xiiif-sources-test.el \
       -f ert-run-tests-batch-and-exit
 ```
 
@@ -461,8 +497,7 @@ long-term plan. Highlights of the next sprints:
   finer-grained HTTP error reporting.
 - **0.3** — bulk derivative export, `org-capture` template, citation
   export (BibTeX / CSL-JSON), annotation fetch, OCR/ALTO sidecars.
-- **0.4** — source registry (Gallica, LoC, Wellcome, DPLA…), hooks
-  and per-server profiles.
+- **0.4** — source registry ✅, hooks, per-server profiles.
 
 ## Contributing
 

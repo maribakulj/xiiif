@@ -23,6 +23,7 @@
 ;; Entry points:
 ;;
 ;;   M-x xiiif-open-manifest      open a manifest URL
+;;   M-x xiiif-open-source        open from a named registered source
 ;;   M-x xiiif-browse-canvases    browse the current manifest
 ;;   M-x xiiif-open-canvas        open the canvas at point
 ;;   M-x xiiif-copy-image-url     copy a derivative URL
@@ -46,6 +47,7 @@
 (require 'xiiif-core)
 (require 'xiiif-cache)
 (require 'xiiif-image)
+(require 'xiiif-sources)
 (require 'xiiif-ui)
 (require 'xiiif-org)
 
@@ -146,6 +148,23 @@ the appropriate buffer."
 ;;;###autoload
 (defalias 'xiiif-open #'xiiif-open-manifest
   "Alias for `xiiif-open-manifest', whose name predates Collection support.")
+
+;;;###autoload
+(defun xiiif-open-source ()
+  "Pick a registered IIIF source and open a manifest by identifier.
+Sources live in `xiiif-sources'; each entry declares an identifier
+prompt and a URL template.  The built URL is handed off to
+`xiiif-open-manifest', which auto-detects Manifest vs Collection."
+  (interactive)
+  (unless xiiif-sources
+    (user-error "`xiiif-sources' is empty; add entries with `customize'"))
+  (let* ((source (xiiif-sources-read))
+         (prompt (or (plist-get source :prompt) "Identifier: "))
+         (id     (read-string prompt)))
+    (when (string-blank-p id)
+      (user-error "No identifier entered"))
+    (xiiif-open-manifest
+     (xiiif-source-build-manifest-url source id))))
 
 ;;;###autoload
 (defun xiiif-browse-canvases ()
