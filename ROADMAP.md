@@ -48,8 +48,10 @@ deliberately speculative.
 - **Hooks.** `xiiif-after-load-manifest-hook`,
   `xiiif-canvas-format-functions` and friends so users can extend the
   UI without patching the package.
-- **Per-server profiles.** A `xiiif-server-profile` record that can
-  override default region/size/format and authentication headers.
+- [x] **Per-server profiles.** `xiiif-server-profiles' is an alist
+  keyed by URL regexp; entries can inject HTTP headers (auth
+  tokens) and override Image API defaults (region/size/rotation/
+  quality/format) for matching URLs. *(shipped)*
 
 ## Later / uncertain
 

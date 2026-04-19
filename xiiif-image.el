@@ -27,6 +27,7 @@
 (require 'subr-x)
 (require 'xiiif-core)
 (require 'xiiif-api)
+(require 'xiiif-profiles)
 
 (defcustom xiiif-image-default-region "full"
   "Default region segment for `xiiif-image-url'."
@@ -73,17 +74,26 @@ image body is used) or a plain string."
 
 SERVICE is a `xiiif-image-service', a `xiiif-canvas', or a base URL string.
 REGION, SIZE, ROTATION, QUALITY and FORMAT override the defaults defined
-by the `xiiif-image-default-*' customization variables.
+by the `xiiif-image-default-*' customization variables.  When a server
+profile in `xiiif-server-profiles' matches the service base URL, its
+`:image' plist provides defaults that sit between the explicit
+arguments and the global defaults.
 
 Returns nil when SERVICE has no derivable base URL."
   (when-let ((base (xiiif-image-service-base service)))
-    (format "%s/%s/%s/%s/%s.%s"
-            base
-            (or region   xiiif-image-default-region)
-            (or size     xiiif-image-default-size)
-            (or rotation xiiif-image-default-rotation)
-            (or quality  xiiif-image-default-quality)
-            (or format   xiiif-image-default-format))))
+    (let ((profile (xiiif-profile-image-defaults base)))
+      (format "%s/%s/%s/%s/%s.%s"
+              base
+              (or region   (plist-get profile :region)
+                  xiiif-image-default-region)
+              (or size     (plist-get profile :size)
+                  xiiif-image-default-size)
+              (or rotation (plist-get profile :rotation)
+                  xiiif-image-default-rotation)
+              (or quality  (plist-get profile :quality)
+                  xiiif-image-default-quality)
+              (or format   (plist-get profile :format)
+                  xiiif-image-default-format)))))
 
 (defun xiiif-image-info-url (service)
   "Return the info.json URL for SERVICE, or nil."
