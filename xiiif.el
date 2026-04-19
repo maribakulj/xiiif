@@ -65,6 +65,31 @@
   "Current version of the xiiif package.")
 
 
+;;; ---------- public hooks (extensibility) ----------
+
+(defcustom xiiif-after-load-manifest-hook nil
+  "Abnormal hook run after a manifest is loaded by `xiiif-open-manifest'
+or refreshed by `xiiif-refresh'.
+Each function receives the `xiiif-manifest' struct as its single
+argument.  Runs after the cache is updated and the overview buffer
+is rendered."
+  :type 'hook :group 'xiiif)
+
+(defcustom xiiif-after-load-collection-hook nil
+  "Abnormal hook run after a collection is loaded by `xiiif-open-manifest'.
+Each function receives the `xiiif-collection' struct as its single
+argument."
+  :type 'hook :group 'xiiif)
+
+(defcustom xiiif-after-render-canvas-hook nil
+  "Abnormal hook run after the canvas detail buffer is rendered.
+Each function runs inside the canvas buffer and receives the
+`xiiif-canvas' struct as its single argument.  Useful for enriching
+the view with a lightweight annotation, an extra section, or a
+third-party link."
+  :type 'hook :group 'xiiif)
+
+
 ;;; ---------- helpers that resolve "what does the user mean now?" ----------
 
 (defun xiiif--require-manifest ()
@@ -137,6 +162,7 @@ the appropriate buffer."
      (xiiif-cache-set-manifest manifest)
      (xiiif-cache-set-canvas nil)
      (xiiif-ui-render-manifest manifest)
+     (run-hook-with-args 'xiiif-after-load-manifest-hook manifest)
      (let ((n (length (xiiif-manifest-canvases manifest))))
        (message "xiiif: loaded %s (%d canvas%s)"
                 (xiiif-manifest-title manifest)
@@ -144,6 +170,7 @@ the appropriate buffer."
    (lambda (collection)
      (xiiif-cache-set-collection collection)
      (xiiif-ui-render-collection collection)
+     (run-hook-with-args 'xiiif-after-load-collection-hook collection)
      (let ((n (length (xiiif-collection-children collection))))
        (message "xiiif: loaded collection %s (%d item%s)"
                 (xiiif-collection-title collection)
@@ -420,10 +447,12 @@ detail buffer (re-resolved by id) and the collection browser."
              (xiiif-ui-render-structures fresh)
            (xiiif-ui-render-manifest fresh)))
         (t (xiiif-ui-render-manifest fresh)))
+       (run-hook-with-args 'xiiif-after-load-manifest-hook fresh)
        (message "xiiif: refreshed %s" (xiiif-manifest-title fresh)))
      (lambda (fresh)
        (xiiif-cache-set-collection fresh)
        (xiiif-ui-render-collection fresh)
+       (run-hook-with-args 'xiiif-after-load-collection-hook fresh)
        (message "xiiif: refreshed %s" (xiiif-collection-title fresh))))))
 
 ;;;###autoload

@@ -475,6 +475,26 @@ All options live under the `xiiif` group (`M-x customize-group RET xiiif`).
 | `xiiif-history-file`  | `~/.emacs.d/xiiif-history.el`        |
 | `xiiif-history-size`  | `25`                                 |
 
+### Extensibility hooks
+
+Three abnormal hooks let you plug in without patching:
+
+| Hook                                | Argument                | When it fires                                          |
+| ----------------------------------- | ----------------------- | ------------------------------------------------------ |
+| `xiiif-after-load-manifest-hook`    | `xiiif-manifest`        | After `xiiif-open-manifest` or `xiiif-refresh` succeeds on a Manifest. |
+| `xiiif-after-load-collection-hook`  | `xiiif-collection`      | After `xiiif-open-manifest` or `xiiif-refresh` succeeds on a Collection. |
+| `xiiif-after-render-canvas-hook`    | `xiiif-canvas`          | Inside the `*XIIIF Canvas*` buffer after it has been populated. |
+
+Example — drop a quick note whenever a manifest finishes loading:
+
+```elisp
+(add-hook 'xiiif-after-load-manifest-hook
+          (lambda (m)
+            (message "xiiif: %s has %d canvas(es)"
+                     (xiiif-manifest-title m)
+                     (length (xiiif-manifest-canvases m)))))
+```
+
 ## Error handling
 
 All transport, HTTP and JSON failures are translated into a small
