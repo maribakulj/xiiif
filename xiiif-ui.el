@@ -248,10 +248,50 @@
   (buffer-disable-undo)
   (setq-local truncate-lines t))
 
+(defcustom xiiif-ui-show-thumbnails t
+  "When non-nil, render the canvas thumbnail inline in the canvas detail buffer.
+The inline preview is only attempted on graphic displays."
+  :type 'boolean
+  :group 'xiiif)
+
+(defcustom xiiif-ui-thumbnail-size "!200,200"
+  "IIIF Image API `size' segment used when synthesizing a canvas thumbnail.
+Only used as a fallback when the canvas does not declare its own
+`thumbnail' field."
+  :type 'string
+  :group 'xiiif)
+
+(defun xiiif-ui--insert-thumbnail-async (canvas buffer marker)
+  "Fetch a thumbnail for CANVAS and insert it at MARKER in BUFFER.
+Does nothing on text-only displays or when CANVAS has no usable URL."
+  (when (and (display-graphic-p)
+             (buffer-live-p buffer))
+    (let ((url (xiiif-canvas-thumbnail-url
+                canvas xiiif-ui-thumbnail-size)))
+      (when url
+        (xiiif-api-fetch-bytes-async
+         url
+         (lambda (bytes)
+           (when (buffer-live-p buffer)
+             (with-current-buffer buffer
+               (save-excursion
+                 (goto-char marker)
+                 (let ((inhibit-read-only t))
+                   (condition-case _
+                       (insert-image (create-image bytes nil t))
+                     (error
+                      (insert
+                       (propertize "(could not render thumbnail)"
+                                   'face 'xiiif-hint)))))))))
+         (lambda (_err) nil))))))
+
 (defun xiiif-ui-render-canvas (canvas)
-  "Render the canvas detail buffer for CANVAS and display it."
+  "Render the canvas detail buffer for CANVAS and display it.
+When `xiiif-ui-show-thumbnails' is non-nil on a graphic display,
+fetches a small preview asynchronously and inserts it at the end."
   (let ((buf (get-buffer-create xiiif-ui--canvas-buffer))
-        (service (xiiif-canvas-image-service canvas)))
+        (service (xiiif-canvas-image-service canvas))
+        thumb-marker)
     (with-current-buffer buf
       (xiiif-canvas-mode)
       (setq-local xiiif-ui--canvas canvas)
@@ -277,8 +317,14 @@
           (insert "\n")
           (xiiif-ui--insert-heading "Default derivative")
           (xiiif-ui--insert-field "URL" (xiiif-image-url canvas)))
+        (when (and xiiif-ui-show-thumbnails (display-graphic-p))
+          (insert "\n")
+          (xiiif-ui--insert-heading "Thumbnail")
+          (setq thumb-marker (point-marker)))
         (goto-char (point-min))))
-    (pop-to-buffer-same-window buf)))
+    (pop-to-buffer-same-window buf)
+    (when thumb-marker
+      (xiiif-ui--insert-thumbnail-async canvas buf thumb-marker))))
 
 (defvar-local xiiif-ui--canvas nil
   "The `xiiif-canvas' backing the current canvas detail buffer.")
