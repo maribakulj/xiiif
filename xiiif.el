@@ -34,6 +34,7 @@
 ;;
 ;;   M-x xiiif-show-raw-json      inspect the underlying JSON
 ;;   M-x xiiif-show-info-json     inspect the Image API info.json
+;;   M-x xiiif-show-annotations   inspect canvas annotations
 ;;   M-x xiiif-refresh            re-fetch the current manifest
 ;;   M-x xiiif-open-recent        pick from recently opened manifests
 ;;   M-x xiiif-retry-last         re-issue the last failed fetch
@@ -48,6 +49,7 @@
 (require 'xiiif-core)
 (require 'xiiif-cache)
 (require 'xiiif-image)
+(require 'xiiif-annotations)
 (require 'xiiif-ui)
 (require 'xiiif-org)
 (require 'xiiif-cite)

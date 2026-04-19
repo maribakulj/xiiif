@@ -193,6 +193,7 @@ Common bindings:
 | `D`   | Bulk-download every marked canvas (canvas browser)             |
 | `i`   | Insert an Org link (or copy to kill-ring in read-only buffers) |
 | `I`   | Fetch and display the image service `info.json` (canvas detail)|
+| `a`   | Fetch and display annotations for the canvas (canvas detail)   |
 | `J`   | Show raw JSON                                                  |
 | `g`   | Refresh                                                        |
 | `q`   | `quit-window`                                                  |
