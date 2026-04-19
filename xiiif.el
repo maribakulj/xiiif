@@ -341,6 +341,18 @@ detail buffer (re-resolved by id) and the collection browser."
     (xiiif-open-manifest url)))
 
 ;;;###autoload
+(defun xiiif-toggle-thumbnails ()
+  "Toggle inline thumbnail rendering in the canvas detail buffer.
+Re-renders the current canvas, if any, to pick up the new setting."
+  (interactive)
+  (setq xiiif-ui-show-thumbnails (not xiiif-ui-show-thumbnails))
+  (message "xiiif: thumbnails %s"
+           (if xiiif-ui-show-thumbnails "enabled" "disabled"))
+  (when (and xiiif-current-canvas
+             (derived-mode-p 'xiiif-canvas-mode))
+    (xiiif-ui-render-canvas xiiif-current-canvas)))
+
+;;;###autoload
 (defun xiiif-retry-last ()
   "Re-issue the most recent failed xiiif fetch.
 Uses the URL stored in `xiiif-api-last-error'.  The error slot is
