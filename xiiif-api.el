@@ -204,6 +204,49 @@ buffers and UI directly."
                     (list 'xiiif-network-error url
                           (error-message-string err)))))))))
 
+(defun xiiif-api-fetch-bytes-async (url callback &optional errback)
+  "Fetch URL asynchronously and pass the raw body to CALLBACK.
+
+The body is delivered as a unibyte string suitable for `create-image'
+with the DATA-P argument.  On failure, ERRBACK (or the default
+reporter) is called with the same (ERROR-SYMBOL URL &rest DATA)
+shape used by `xiiif-api-fetch-json-async'."
+  (let ((errback (or errback #'xiiif-api--default-errback)))
+    (if (not (xiiif-api--valid-url-p url))
+        (funcall errback (list 'xiiif-network-error url "invalid URL"))
+      (condition-case err
+          (url-retrieve
+           url
+           (lambda (status)
+             (let ((buf (current-buffer)))
+               (unwind-protect
+                   (condition-case handler-err
+                       (let ((net-err (plist-get status :error)))
+                         (when net-err
+                           (signal 'xiiif-network-error
+                                   (list url (error-message-string
+                                              net-err))))
+                         (let ((code (xiiif-api--status-code)))
+                           (when (and code (or (< code 200) (>= code 400)))
+                             (signal 'xiiif-http-error (list url code))))
+                         (xiiif-api--skip-headers)
+                         (set-buffer-multibyte nil)
+                         (funcall callback
+                                  (buffer-substring-no-properties
+                                   (point) (point-max))))
+                     (xiiif-error
+                      (funcall errback handler-err))
+                     (error
+                      (funcall errback
+                               (list 'xiiif-error url
+                                     (error-message-string handler-err)))))
+                 (when (buffer-live-p buf) (kill-buffer buf)))))
+           nil t t)
+        (error
+         (funcall errback
+                  (list 'xiiif-network-error url
+                        (error-message-string err))))))))
+
 (defun xiiif-api-download-file (url destination)
   "Download URL to DESTINATION, overwriting if it exists.
 Any headers declared by a matching `xiiif-server-profiles' entry

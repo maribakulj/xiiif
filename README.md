@@ -37,6 +37,7 @@ upstream servers.
 - [Quick start](#quick-start)
 - [Commands](#commands)
 - [Buffers and keymaps](#buffers-and-keymaps)
+- [Structures (Ranges)](#structures-ranges)
 - [Collections](#collections)
 - [IIIF Image API URLs](#iiif-image-api-urls)
 - [Org integration](#org-integration)
@@ -134,6 +135,11 @@ auto-detects resource type.
 `M-x xiiif-open-recent` re-opens any URL you have visited before
 (persisted across Emacs restarts).
 
+`M-x xiiif-open-source` dispatches by institution: pick from the
+built-in registry (Gallica, Wellcome, Internet Archive), type the
+local identifier, and the full manifest URL is assembled for you.
+Add your own endpoints with `customize-variable xiiif-sources`.
+
 ## Commands
 
 All commands are autoloaded.
@@ -144,12 +150,16 @@ All commands are autoloaded.
 | --------------------------- | ---------------------------------------------------------------- |
 | `xiiif-open-manifest`       | Prompt for a URL, fetch asynchronously, dispatch by type.        |
 | `xiiif-open`                | Alias for `xiiif-open-manifest`.                                 |
+| `xiiif-open-source`         | Pick a registered IIIF source and open a manifest by identifier. |
 | `xiiif-browse-canvases`     | Open the canvas browser for the current manifest.                |
 | `xiiif-open-canvas`         | Open the canvas at point or the current canvas.                  |
 | `xiiif-copy-image-url`      | Copy a derivative URL. `C-u` prompts for all parameters.         |
 | `xiiif-download-image`      | Download a derivative for the current/contextual canvas.         |
+| `xiiif-download-marked`     | Bulk-download every marked canvas in the browser to a directory. |
 | `xiiif-show-info-json`      | Fetch and display the Image API `info.json` for a canvas.        |
+| `xiiif-show-structures`     | Open the structural navigator (Ranges) for the current manifest. |
 | `xiiif-insert-org-link`     | Insert a manifest, canvas, image link, or metadata block.        |
+| `xiiif-export-citation`     | Export the manifest as BibTeX or CSL-JSON (insert or kill-ring). |
 
 ### Auxiliary
 
@@ -160,11 +170,12 @@ All commands are autoloaded.
 | `xiiif-refresh`             | Re-fetch the current resource and redisplay.                     |
 | `xiiif-open-recent`         | Pick from recently opened resource URLs.                         |
 | `xiiif-retry-last`          | Re-issue the most recent failed fetch.                           |
+| `xiiif-toggle-thumbnails`   | Enable or disable inline canvas-thumbnail previews.              |
 | `xiiif-cache-clear`         | Drop in-memory state (does not touch the history file).          |
 
 ## Buffers and keymaps
 
-`xiiif` uses four buffers, each in its own derived major mode. They
+`xiiif` uses six buffers, each in its own derived major mode. They
 share a vocabulary of keys.
 
 | Buffer                 | Mode                       | Underlying mode        |
@@ -174,6 +185,7 @@ share a vocabulary of keys.
 | `*XIIIF Canvas*`       | `xiiif-canvas-mode`        | `special-mode`         |
 | `*XIIIF Collection*`   | `xiiif-collection-mode`    | `tabulated-list-mode`  |
 | `*XIIIF Image Info*`   | `xiiif-info-mode`          | `special-mode`         |
+| `*XIIIF Structures*`   | `xiiif-structures-mode`    | `special-mode`         |
 
 Common bindings:
 
@@ -183,17 +195,45 @@ Common bindings:
 | `o`   | Same as `RET` in list buffers                                  |
 | `y`   | Copy the contextually useful URL                               |
 | `d`   | Download the contextual image (canvas browser, canvas detail)  |
+| `m` / `u` / `U` / `t` | Mark / unmark / unmark-all / toggle-mark a canvas (canvas browser) |
+| `D`   | Bulk-download every marked canvas (canvas browser)             |
 | `i`   | Insert an Org link (or copy to kill-ring in read-only buffers) |
 | `I`   | Fetch and display the image service `info.json` (canvas detail)|
+| `a`   | Fetch and display annotations for the canvas (canvas detail)   |
 | `J`   | Show raw JSON                                                  |
 | `g`   | Refresh                                                        |
 | `q`   | `quit-window`                                                  |
 | `c`   | Jump to canvas browser (manifest overview)                     |
+| `s`   | Open the structural navigator (manifest overview, if any)      |
+| `n/p` | Next / previous structure entry (structures buffer)            |
 
 `i` does the right thing depending on the buffer: when the current
 buffer is writable (like an Org buffer you've switched to), the link
 is inserted at point; when called from a read-only xiiif buffer, the
 link is placed on the kill-ring with a notification, ready to yank.
+
+## Structures (Ranges)
+
+Many GLAM manifests declare a hierarchical table of contents in the
+`structures` field — chapters, sections, folios — as IIIF `Range`
+objects. `xiiif-show-structures` (bound to `s` in the manifest
+overview) opens a `*XIIIF Structures*` buffer that renders the full
+tree with one line per range or canvas:
+
+```
+* Book structure
+  * Front matter
+    - Folio 1r
+  * Body
+    - Folio 1v
+```
+
+`RET` on a canvas line opens the canvas detail buffer; `RET` on a
+range line opens that range's first reachable canvas. `n` / `p` (and
+`TAB` / `<backtab>`) move between entries. The parser accepts both
+v3 (Range with inline `items`) and v2 (`sc:Range` with `canvases` +
+`ranges` references resolved against sibling ranges), with cycle
+detection for malformed manifests.
 
 ## Collections
 
@@ -244,6 +284,19 @@ In Lisp:
 ```
 
 `xiiif-image-info-url` returns the `info.json` endpoint of a service.
+
+### Inline thumbnails
+
+On a graphic Emacs display, the canvas detail buffer fetches a small
+IIIF Image API derivative of the canvas and inserts it inline as its
+last section. The canvas's declared `thumbnail` field is used when
+present; otherwise a URL is synthesized from the image service at
+`xiiif-ui-thumbnail-size` (default `!200,200`).
+
+The preview is fetched asynchronously after the text has rendered, so
+the buffer is usable immediately; failures are silent. Toggle the
+feature with `M-x xiiif-toggle-thumbnails` or set
+`xiiif-ui-show-thumbnails` to `nil` in init.
 
 ### Inspecting `info.json`
 
@@ -303,6 +356,32 @@ Example metadata block:
 These are plain Org links and plain block elements — they do not
 require any Org extensions to work.
 
+### `org-capture` template
+
+Two helpers make it trivial to produce a ready-to-file research note
+from the manifest currently loaded in xiiif:
+
+- `xiiif-org-capture-headline` — the manifest title, suitable for a
+  headline.
+- `xiiif-org-capture-body` — a block with a manifest link, an
+  optional canvas link (if `xiiif-current-canvas` is set) and a
+  `#+begin_xiiif` metadata block including a `:notes:` line.
+
+Wire them into `org-capture-templates`:
+
+```elisp
+(with-eval-after-load 'org-capture
+  (add-to-list 'org-capture-templates
+               '("x" "IIIF manifest note" entry
+                 (file+headline "~/org/research.org" "IIIF")
+                 "* %(xiiif-org-capture-headline)\n%(xiiif-org-capture-body)\n%?"
+                 :empty-lines 1)))
+```
+
+Both helpers signal `user-error` when no manifest is loaded, so the
+capture template fails loudly instead of silently writing an empty
+note.
+
 ## Internal data model
 
 Internally, `xiiif` parses every resource into `cl-defstruct` types:
@@ -317,6 +396,8 @@ Internally, `xiiif` parses every resource into `cl-defstruct` types:
   qualities, extra-features, rights, raw.
 - `xiiif-collection`      — url, id, type, label, summary, items, raw.
 - `xiiif-collection-item` — id, type, label (lazy stub for a child).
+- `xiiif-range`            — id, type, label, canvas-ids, sub-ranges,
+  raw; v2 `ranges` id-references are linked in place.
 
 The parser accepts both IIIF Presentation API 2.x
 (`sequences`/`images`/`manifests`/`collections`) and 3.x (`items`)
@@ -336,7 +417,7 @@ xiiif/
   xiiif-image.el    ; IIIF Image API URL builder, download
   xiiif-ui.el       ; major modes & buffers
   xiiif-org.el      ; Org link / metadata insertion
-  xiiif-profiles.el ; per-server HTTP / image API overrides
+  xiiif-cite.el     ; BibTeX / CSL-JSON export
   tests/            ; ERT tests
   examples/         ; sample manifest + collection fixtures
 ```
@@ -345,11 +426,12 @@ xiiif/
 | --------------- | ------------------------------------------------------------------- |
 | `xiiif`         | Autoloaded user commands; dispatches between manifest and collection. |
 | `xiiif-api`     | `xiiif-api-fetch-json` (sync) and `xiiif-api-fetch-json-async`. Defines `xiiif-network-error`, `xiiif-http-error`, `xiiif-parse-error`. |
-| `xiiif-core`    | `cl-defstruct` types, `xiiif-parse-manifest`, `xiiif-parse-collection`, `xiiif-resource-kind`, `xiiif-label-string`, `xiiif-metadata-pairs`. |
+| `xiiif-core`    | `cl-defstruct` types, `xiiif-parse-manifest`, `xiiif-parse-collection`, `xiiif-manifest-structures`, `xiiif-resource-kind`, `xiiif-label-string`, `xiiif-metadata-pairs`. |
 | `xiiif-cache`   | Current manifest / canvas / collection; recent URL ring; tiny on-disk persistence. |
 | `xiiif-image`   | `xiiif-image-url`, `xiiif-image-info-url`, `xiiif-image-download`, `xiiif-image-fetch-info`, `xiiif-image-fetch-info-async`, and the `xiiif-image-info` parser. |
-| `xiiif-ui`      | Five derived modes; renders all xiiif buffers. |
+| `xiiif-ui`      | Six derived modes; renders all xiiif buffers. |
 | `xiiif-org`     | `xiiif-org-insert-*` and the underlying link / metadata-block helpers. |
+| `xiiif-cite`    | `xiiif-citation-metadata`, `xiiif-citation-bibtex`, `xiiif-citation-csl-json`. |
 
 ## Customization
 
@@ -379,6 +461,13 @@ All options live under the `xiiif` group (`M-x customize-group RET xiiif`).
 | `xiiif-image-default-format`    | `"jpg"`     |
 | `xiiif-image-download-directory`| `~/.emacs.d/xiiif/` |
 
+### Thumbnails
+
+| Option                          | Default      |
+| ------------------------------- | ------------ |
+| `xiiif-ui-show-thumbnails`      | `t`          |
+| `xiiif-ui-thumbnail-size`       | `"!200,200"` |
+
 ### Recents
 
 | Option                | Default                              |
@@ -386,31 +475,25 @@ All options live under the `xiiif` group (`M-x customize-group RET xiiif`).
 | `xiiif-history-file`  | `~/.emacs.d/xiiif-history.el`        |
 | `xiiif-history-size`  | `25`                                 |
 
-### Per-server profiles
+### Extensibility hooks
 
-`xiiif-server-profiles` is an alist of `(URL-REGEXP . PLIST)`. The
-first regexp matching a request URL wins. Supported plist keys:
+Three abnormal hooks let you plug in without patching:
 
-| Key        | Purpose                                                  |
-| ---------- | -------------------------------------------------------- |
-| `:label`   | Free-text identifier shown by diagnostics.               |
-| `:headers` | Alist of extra HTTP headers to attach (auth tokens, etc).|
-| `:image`   | Plist of Image API overrides (`:region`, `:size`, `:rotation`, `:quality`, `:format`). Sits between explicit `xiiif-image-url` args and the global `xiiif-image-default-*` defaults. |
-| `:notes`   | Free text.                                               |
+| Hook                                | Argument                | When it fires                                          |
+| ----------------------------------- | ----------------------- | ------------------------------------------------------ |
+| `xiiif-after-load-manifest-hook`    | `xiiif-manifest`        | After `xiiif-open-manifest` or `xiiif-refresh` succeeds on a Manifest. |
+| `xiiif-after-load-collection-hook`  | `xiiif-collection`      | After `xiiif-open-manifest` or `xiiif-refresh` succeeds on a Collection. |
+| `xiiif-after-render-canvas-hook`    | `xiiif-canvas`          | Inside the `*XIIIF Canvas*` buffer after it has been populated. |
 
-Example — ship a bearer token to a staging host and force PNG
-derivatives from it:
+Example — drop a quick note whenever a manifest finishes loading:
 
 ```elisp
-(setq xiiif-server-profiles
-      '(("\\`https://iiif\\.staging\\.example\\.org"
-         :label   "Staging"
-         :headers (("Authorization" . "Bearer hunter2"))
-         :image   (:size "!1024,1024" :format "png"))))
+(add-hook 'xiiif-after-load-manifest-hook
+          (lambda (m)
+            (message "xiiif: %s has %d canvas(es)"
+                     (xiiif-manifest-title m)
+                     (length (xiiif-manifest-canvases m)))))
 ```
-
-The profile applies uniformly to JSON fetches, `info.json` fetches,
-derivative downloads and bulk export.
 
 ## Error handling
 
@@ -459,7 +542,7 @@ emacs -batch -L . -L tests \
       -l tests/xiiif-api-test.el \
       -l tests/xiiif-core-test.el \
       -l tests/xiiif-image-test.el \
-      -l tests/xiiif-profiles-test.el \
+      -l tests/xiiif-cite-test.el \
       -f ert-run-tests-batch-and-exit
 ```
 
@@ -485,12 +568,11 @@ See [`ROADMAP.md`](ROADMAP.md) for the short-, medium-, and
 long-term plan. Highlights of the next sprints:
 
 - **0.2** — async fetch ✅, Collections ✅, `info.json` integration ✅,
-  structures/ranges navigation, inline thumbnail preview,
-  finer-grained HTTP error reporting.
+  finer-grained HTTP error reporting ✅, structures/ranges navigation ✅,
+  inline thumbnail preview.
 - **0.3** — bulk derivative export, `org-capture` template, citation
   export (BibTeX / CSL-JSON), annotation fetch, OCR/ALTO sidecars.
-- **0.4** — source registry (Gallica, LoC, Wellcome, DPLA…), hooks,
-  per-server profiles ✅.
+- **0.4** — source registry ✅, hooks, per-server profiles.
 
 ## Contributing
 
