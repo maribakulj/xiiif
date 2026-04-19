@@ -212,5 +212,98 @@
                            "http://x/m")
    :type 'xiiif-parse-error))
 
+
+
+;;; ---- structures / ranges ----
+
+(ert-deftest xiiif-manifest-structures/v3-tree ()
+  "The v3 fixture carries a two-level Range tree with one canvas per leaf."
+  (let* ((m (xiiif-parse-manifest (xiiif-test--load-fixture)
+                                  "https://example.org/manifest"))
+         (structures (xiiif-manifest-structures m)))
+    (should (= 1 (length structures)))
+    (let* ((top (car structures))
+           (children (xiiif-range-sub-ranges top)))
+      (should (xiiif-range-p top))
+      (should (equal "Book structure" (xiiif-range-title top)))
+      (should (= 2 (length children)))
+      (should (equal "Front matter"
+                     (xiiif-range-title (nth 0 children))))
+      (should (equal '("https://example.org/iiif/book1/canvas/p1")
+                     (xiiif-range-canvas-ids (nth 0 children))))
+      (should (equal "https://example.org/iiif/book1/canvas/p2"
+                     (xiiif-range-first-canvas-id (nth 1 children)))))))
+
+(ert-deftest xiiif-manifest-structures/v2-resolves-ids ()
+  "v2 ranges use `ranges' references; `structures' must only surface tops."
+  (let* ((v2 `((@id . "http://x/m")
+               (@type . "sc:Manifest")
+               (label . "Old Book")
+               (sequences . [((@id . "http://x/m/seq") (@type . "sc:Sequence")
+                              (canvases . [((@id . "http://x/m/c1")
+                                            (@type . "sc:Canvas")
+                                            (label . "p1"))]))])
+               (structures . [((@id . "http://x/r/top")
+                               (@type . "sc:Range")
+                               (label . "Top")
+                               (ranges . ["http://x/r/chap1"]))
+                              ((@id . "http://x/r/chap1")
+                               (@type . "sc:Range")
+                               (label . "Chapter 1")
+                               (canvases . ["http://x/m/c1"]))])))
+         (m (xiiif-parse-manifest v2 "http://x/m"))
+         (structures (xiiif-manifest-structures m)))
+    (should (= 1 (length structures)))
+    (let* ((top (car structures))
+           (chap (car (xiiif-range-sub-ranges top))))
+      (should (equal "Top" (xiiif-range-title top)))
+      (should (equal "Range" (xiiif-range-type top)))
+      (should (null (xiiif-range-canvas-ids top)))
+      (should (equal "Chapter 1" (xiiif-range-title chap)))
+      (should (equal '("http://x/m/c1") (xiiif-range-canvas-ids chap))))))
+
+(ert-deftest xiiif-manifest-structures/nil-without-structures ()
+  (let* ((raw '((id . "http://x/m") (type . "Manifest") (label . "x")))
+         (m (xiiif-parse-manifest raw "http://x/m")))
+    (should (null (xiiif-manifest-structures m)))))
+
+(ert-deftest xiiif-manifest-structures/v2-handles-cycle ()
+  "A cyclic v2 range reference does not hang the parser."
+  (let* ((v2 `((@id . "http://x/m")
+               (@type . "sc:Manifest")
+               (label . "Cyclic")
+               (structures . [((@id . "http://x/r/top") (@type . "sc:Range")
+                               (label . "Top") (ranges . ["http://x/r/a"]))
+                              ((@id . "http://x/r/a") (@type . "sc:Range")
+                               (label . "A") (ranges . ["http://x/r/b"]))
+                              ((@id . "http://x/r/b") (@type . "sc:Range")
+                               (label . "B") (ranges . ["http://x/r/a"]))])))
+         (m (xiiif-parse-manifest v2 "http://x/m"))
+         (structures (xiiif-manifest-structures m)))
+    (should (= 1 (length structures)))
+    (let* ((top (car structures))
+           (a   (car (xiiif-range-sub-ranges top)))
+           (b   (car (xiiif-range-sub-ranges a))))
+      (should (equal "Top" (xiiif-range-title top)))
+      (should (equal "A"   (xiiif-range-title a)))
+      (should (equal "B"   (xiiif-range-title b)))
+      ;; B -> A would recurse, but the visited guard drops the back-edge.
+      (should (null (xiiif-range-sub-ranges b))))))
+
+(ert-deftest xiiif-range-first-canvas-id/walks-sub-ranges ()
+  (let ((leaf (make-xiiif-range :canvas-ids '("http://x/c1"))))
+    (should (equal "http://x/c1"
+                   (xiiif-range-first-canvas-id
+                    (make-xiiif-range :sub-ranges (list leaf)))))))
+
+(ert-deftest xiiif-manifest-find-canvas/looks-up-by-id ()
+  (let* ((m (xiiif-parse-manifest (xiiif-test--load-fixture)
+                                  "https://example.org/manifest"))
+         (hit (xiiif-manifest-find-canvas
+               m "https://example.org/iiif/book1/canvas/p2")))
+    (should hit)
+    (should (equal "Folio 1v" (xiiif-canvas-title hit)))
+    (should (null (xiiif-manifest-find-canvas m "http://x/nope")))))
+
 (provide 'xiiif-core-test)
 ;;; xiiif-core-test.el ends here

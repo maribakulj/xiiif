@@ -87,5 +87,30 @@
         }
       ]
     }
+  ],
+  "structures": [
+    {
+      "id": "https://example.org/iiif/book1/range/top",
+      "type": "Range",
+      "label": {"en": ["Book structure"]},
+      "items": [
+        {
+          "id": "https://example.org/iiif/book1/range/front",
+          "type": "Range",
+          "label": {"en": ["Front matter"]},
+          "items": [
+            {"id": "https://example.org/iiif/book1/canvas/p1", "type": "Canvas"}
+          ]
+        },
+        {
+          "id": "https://example.org/iiif/book1/range/body",
+          "type": "Range",
+          "label": {"en": ["Body"]},
+          "items": [
+            {"id": "https://example.org/iiif/book1/canvas/p2", "type": "Canvas"}
+          ]
+        }
+      ]
+    }
   ]
 }

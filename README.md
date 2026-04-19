@@ -37,6 +37,7 @@ upstream servers.
 - [Quick start](#quick-start)
 - [Commands](#commands)
 - [Buffers and keymaps](#buffers-and-keymaps)
+- [Structures (Ranges)](#structures-ranges)
 - [Collections](#collections)
 - [IIIF Image API URLs](#iiif-image-api-urls)
 - [Org integration](#org-integration)
@@ -149,6 +150,7 @@ All commands are autoloaded.
 | `xiiif-copy-image-url`      | Copy a derivative URL. `C-u` prompts for all parameters.         |
 | `xiiif-download-image`      | Download a derivative for the current/contextual canvas.         |
 | `xiiif-show-info-json`      | Fetch and display the Image API `info.json` for a canvas.        |
+| `xiiif-show-structures`     | Open the structural navigator (Ranges) for the current manifest. |
 | `xiiif-insert-org-link`     | Insert a manifest, canvas, image link, or metadata block.        |
 
 ### Auxiliary
@@ -164,7 +166,7 @@ All commands are autoloaded.
 
 ## Buffers and keymaps
 
-`xiiif` uses four buffers, each in its own derived major mode. They
+`xiiif` uses six buffers, each in its own derived major mode. They
 share a vocabulary of keys.
 
 | Buffer                 | Mode                       | Underlying mode        |
@@ -174,6 +176,7 @@ share a vocabulary of keys.
 | `*XIIIF Canvas*`       | `xiiif-canvas-mode`        | `special-mode`         |
 | `*XIIIF Collection*`   | `xiiif-collection-mode`    | `tabulated-list-mode`  |
 | `*XIIIF Image Info*`   | `xiiif-info-mode`          | `special-mode`         |
+| `*XIIIF Structures*`   | `xiiif-structures-mode`    | `special-mode`         |
 
 Common bindings:
 
@@ -189,11 +192,36 @@ Common bindings:
 | `g`   | Refresh                                                        |
 | `q`   | `quit-window`                                                  |
 | `c`   | Jump to canvas browser (manifest overview)                     |
+| `s`   | Open the structural navigator (manifest overview, if any)      |
+| `n/p` | Next / previous structure entry (structures buffer)            |
 
 `i` does the right thing depending on the buffer: when the current
 buffer is writable (like an Org buffer you've switched to), the link
 is inserted at point; when called from a read-only xiiif buffer, the
 link is placed on the kill-ring with a notification, ready to yank.
+
+## Structures (Ranges)
+
+Many GLAM manifests declare a hierarchical table of contents in the
+`structures` field — chapters, sections, folios — as IIIF `Range`
+objects. `xiiif-show-structures` (bound to `s` in the manifest
+overview) opens a `*XIIIF Structures*` buffer that renders the full
+tree with one line per range or canvas:
+
+```
+* Book structure
+  * Front matter
+    - Folio 1r
+  * Body
+    - Folio 1v
+```
+
+`RET` on a canvas line opens the canvas detail buffer; `RET` on a
+range line opens that range's first reachable canvas. `n` / `p` (and
+`TAB` / `<backtab>`) move between entries. The parser accepts both
+v3 (Range with inline `items`) and v2 (`sc:Range` with `canvases` +
+`ranges` references resolved against sibling ranges), with cycle
+detection for malformed manifests.
 
 ## Collections
 
@@ -317,6 +345,8 @@ Internally, `xiiif` parses every resource into `cl-defstruct` types:
   qualities, extra-features, rights, raw.
 - `xiiif-collection`      — url, id, type, label, summary, items, raw.
 - `xiiif-collection-item` — id, type, label (lazy stub for a child).
+- `xiiif-range`            — id, type, label, canvas-ids, sub-ranges,
+  raw; v2 `ranges` id-references are linked in place.
 
 The parser accepts both IIIF Presentation API 2.x
 (`sequences`/`images`/`manifests`/`collections`) and 3.x (`items`)
@@ -344,10 +374,10 @@ xiiif/
 | --------------- | ------------------------------------------------------------------- |
 | `xiiif`         | Autoloaded user commands; dispatches between manifest and collection. |
 | `xiiif-api`     | `xiiif-api-fetch-json` (sync) and `xiiif-api-fetch-json-async`. Defines `xiiif-network-error`, `xiiif-http-error`, `xiiif-parse-error`. |
-| `xiiif-core`    | `cl-defstruct` types, `xiiif-parse-manifest`, `xiiif-parse-collection`, `xiiif-resource-kind`, `xiiif-label-string`, `xiiif-metadata-pairs`. |
+| `xiiif-core`    | `cl-defstruct` types, `xiiif-parse-manifest`, `xiiif-parse-collection`, `xiiif-manifest-structures`, `xiiif-resource-kind`, `xiiif-label-string`, `xiiif-metadata-pairs`. |
 | `xiiif-cache`   | Current manifest / canvas / collection; recent URL ring; tiny on-disk persistence. |
 | `xiiif-image`   | `xiiif-image-url`, `xiiif-image-info-url`, `xiiif-image-download`, `xiiif-image-fetch-info`, `xiiif-image-fetch-info-async`, and the `xiiif-image-info` parser. |
-| `xiiif-ui`      | Five derived modes; renders all xiiif buffers. |
+| `xiiif-ui`      | Six derived modes; renders all xiiif buffers. |
 | `xiiif-org`     | `xiiif-org-insert-*` and the underlying link / metadata-block helpers. |
 
 ## Customization
@@ -457,8 +487,8 @@ See [`ROADMAP.md`](ROADMAP.md) for the short-, medium-, and
 long-term plan. Highlights of the next sprints:
 
 - **0.2** — async fetch ✅, Collections ✅, `info.json` integration ✅,
-  structures/ranges navigation, inline thumbnail preview,
-  finer-grained HTTP error reporting.
+  finer-grained HTTP error reporting ✅, structures/ranges navigation ✅,
+  inline thumbnail preview.
 - **0.3** — bulk derivative export, `org-capture` template, citation
   export (BibTeX / CSL-JSON), annotation fetch, OCR/ALTO sidecars.
 - **0.4** — source registry (Gallica, LoC, Wellcome, DPLA…), hooks

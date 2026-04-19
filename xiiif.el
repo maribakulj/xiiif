@@ -209,6 +209,15 @@ or nil to use the contextual canvas."
                 (or (xiiif-image-info-id info) "image service"))))))
 
 ;;;###autoload
+(defun xiiif-show-structures ()
+  "Open the structural navigator for the current manifest.
+Shows `structures' (v2) and `Range' (v3) hierarchies in a dedicated
+`*XIIIF Structures*' buffer.  RET descends into a range's first
+canvas or opens the canvas at point."
+  (interactive)
+  (xiiif-ui-render-structures (xiiif--require-manifest)))
+
+;;;###autoload
 (defun xiiif-copy-manifest-url ()
   "Copy the URL of the current manifest to the kill ring."
   (interactive)
@@ -287,7 +296,8 @@ Signals `user-error' if there is nothing to refresh."
                  (or xiiif-current-collection
                      (user-error "No collection in this buffer to refresh"))))
             mode))
-     ((or (memq mode '(xiiif-manifest-mode xiiif-canvas-list-mode xiiif-canvas-mode))
+     ((or (memq mode '(xiiif-manifest-mode xiiif-canvas-list-mode
+                       xiiif-canvas-mode xiiif-structures-mode))
           xiiif-current-manifest)
       (cons (xiiif-manifest-url
              (or xiiif-current-manifest
@@ -322,6 +332,10 @@ detail buffer (re-resolved by id) and the collection browser."
                (progn (xiiif-cache-set-canvas match)
                       (xiiif-ui-render-canvas match))
              (xiiif-ui-render-manifest fresh))))
+        ((eq mode 'xiiif-structures-mode)
+         (if (xiiif-manifest-structures fresh)
+             (xiiif-ui-render-structures fresh)
+           (xiiif-ui-render-manifest fresh)))
         (t (xiiif-ui-render-manifest fresh)))
        (message "xiiif: refreshed %s" (xiiif-manifest-title fresh)))
      (lambda (fresh)

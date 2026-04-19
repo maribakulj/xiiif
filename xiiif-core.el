@@ -46,6 +46,14 @@ The first tag for which a value is present wins."
   "A lazy reference to a child Manifest or Collection inside a collection."
   id type label)
 
+(cl-defstruct xiiif-range
+  "Normalized IIIF Range (v2 and v3 structures entry).
+CANVAS-IDS is a list of canvas URIs directly targeted by the range.
+SUB-RANGES is a list of child `xiiif-range' objects, already linked
+for v2 (ids resolved against the manifest's `structures' table) or
+inlined for v3."
+  id type label canvas-ids sub-ranges raw)
+
 
 ;;; ---------- generic JSON helpers ----------
 
@@ -303,6 +311,123 @@ Signals `xiiif-parse-error' if JSON does not look like a collection."
                       "(untitled item)")
                 lbl)))
     (if index (format "%d. %s" index lbl) lbl)))
+
+
+;;; ---------- structures / ranges ----------
+
+(defun xiiif--range-item-kind (item)
+  "Return `canvas', `range', or nil for a v3 range ITEM entry.
+
+v3 items can be bare strings (taken as canvases), SpecificResource
+objects with a `source' canvas, or inline Range/Canvas objects."
+  (cond
+   ((stringp item) 'canvas)
+   ((consp item)
+    (let ((type (xiiif--normalize-type (xiiif--get item 'type))))
+      (cond
+       ((equal type "Range") 'range)
+       ((or (equal type "Canvas") (equal type "SpecificResource"))
+        'canvas)
+       ;; Best-effort fallback: nested items means Range.
+       ((xiiif--get item 'items) 'range)
+       (t 'canvas))))))
+
+(defun xiiif--range-item-id (item)
+  "Return the canvas URI targeted by a v3 range ITEM, or nil."
+  (cond
+   ((stringp item) item)
+   ((consp item)
+    (or (xiiif--get item 'source)
+        (xiiif--get item 'id)))))
+
+(defun xiiif-parse-range-v3 (json)
+  "Parse a v3 Range JSON into a `xiiif-range'."
+  (let (canvases sub-ranges)
+    (dolist (item (xiiif--as-list (xiiif--get json 'items)))
+      (pcase (xiiif--range-item-kind item)
+        ('canvas
+         (when-let ((id (xiiif--range-item-id item)))
+           (push id canvases)))
+        ('range
+         (push (xiiif-parse-range-v3 item) sub-ranges))))
+    (make-xiiif-range
+     :id         (xiiif--get json 'id)
+     :type       (or (xiiif--normalize-type (xiiif--get json 'type)) "Range")
+     :label      (xiiif--get json 'label)
+     :canvas-ids (nreverse canvases)
+     :sub-ranges (nreverse sub-ranges)
+     :raw        json)))
+
+(defun xiiif-parse-range-v2 (json by-id &optional visited)
+  "Parse a v2 Range JSON into a `xiiif-range'.
+
+BY-ID is a hash table of Range id -> raw JSON, used to resolve the
+`ranges' references that v2 uses to nest ranges.  VISITED guards
+against cyclic references in malformed manifests; returns nil when a
+cycle is detected."
+  (let* ((id (xiiif--get json 'id))
+         (visited (or visited (make-hash-table :test 'equal))))
+    (unless (and id (gethash id visited))
+      (when id (puthash id t visited))
+      (make-xiiif-range
+       :id         id
+       :type       (or (xiiif--normalize-type (xiiif--get json 'type)) "Range")
+       :label      (xiiif--get json 'label)
+       :canvas-ids (xiiif--as-list (xiiif--get json 'canvases))
+       :sub-ranges
+       (delq nil
+             (mapcar (lambda (child-id)
+                       (when-let ((raw (gethash child-id by-id)))
+                         (xiiif-parse-range-v2 raw by-id visited)))
+                     (xiiif--as-list (xiiif--get json 'ranges))))
+       :raw        json))))
+
+(defun xiiif-manifest-structures (manifest)
+  "Return a list of top-level `xiiif-range' trees for MANIFEST, or nil.
+
+Detects v2 vs v3 shape automatically: when the first raw range
+carries an `items' array it is parsed recursively in place (v3);
+otherwise the v2 `ranges' references are resolved against a sibling
+lookup table and only non-child ranges are surfaced as top level."
+  (let* ((raw (xiiif--get (xiiif-manifest-raw manifest) 'structures))
+         (ranges (xiiif--as-list raw)))
+    (when ranges
+      (if (xiiif--get (car ranges) 'items)
+          (mapcar #'xiiif-parse-range-v3 ranges)
+        (let ((by-id (make-hash-table :test 'equal))
+              (is-child (make-hash-table :test 'equal)))
+          (dolist (r ranges)
+            (when-let ((id (xiiif--get r 'id)))
+              (puthash id r by-id)))
+          (dolist (r ranges)
+            (dolist (child-id (xiiif--as-list (xiiif--get r 'ranges)))
+              (puthash child-id t is-child)))
+          (delq nil
+                (mapcar (lambda (r)
+                          (unless (gethash (xiiif--get r 'id) is-child)
+                            (xiiif-parse-range-v2 r by-id)))
+                        ranges)))))))
+
+(defun xiiif-range-title (range &optional index)
+  "Return a short display title for RANGE, prefixed by INDEX when non-nil."
+  (let* ((lbl (xiiif-label-string (xiiif-range-label range)))
+         (lbl (if (string-empty-p lbl)
+                  (or (xiiif-range-id range) "(untitled range)")
+                lbl)))
+    (if index (format "%d. %s" index lbl) lbl)))
+
+(defun xiiif-range-first-canvas-id (range)
+  "Return the first canvas URI reachable from RANGE, or nil.
+Walks direct canvas ids first, then recurses into sub-ranges in order."
+  (or (car (xiiif-range-canvas-ids range))
+      (cl-some #'xiiif-range-first-canvas-id
+               (xiiif-range-sub-ranges range))))
+
+(defun xiiif-manifest-find-canvas (manifest canvas-id)
+  "Return the `xiiif-canvas' in MANIFEST whose id is CANVAS-ID, or nil."
+  (and canvas-id
+       (cl-find canvas-id (xiiif-manifest-canvases manifest)
+                :key #'xiiif-canvas-id :test #'equal)))
 
 
 ;;; ---------- resource detection ----------
