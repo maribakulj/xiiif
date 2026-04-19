@@ -149,6 +149,7 @@ All commands are autoloaded.
 | `xiiif-copy-image-url`      | Copy a derivative URL. `C-u` prompts for all parameters.         |
 | `xiiif-download-image`      | Download a derivative for the current/contextual canvas.         |
 | `xiiif-show-info-json`      | Fetch and display the Image API `info.json` for a canvas.        |
+| `xiiif-show-ocr`            | Open an OCR (ALTO / hOCR / plain text) sidecar for a canvas.     |
 | `xiiif-insert-org-link`     | Insert a manifest, canvas, image link, or metadata block.        |
 
 ### Auxiliary
@@ -174,6 +175,7 @@ share a vocabulary of keys.
 | `*XIIIF Canvas*`       | `xiiif-canvas-mode`        | `special-mode`         |
 | `*XIIIF Collection*`   | `xiiif-collection-mode`    | `tabulated-list-mode`  |
 | `*XIIIF Image Info*`   | `xiiif-info-mode`          | `special-mode`         |
+| `*XIIIF OCR*`          | `xiiif-ocr-mode`           | `special-mode`         |
 
 Common bindings:
 
@@ -185,6 +187,8 @@ Common bindings:
 | `d`   | Download the contextual image (canvas browser, canvas detail)  |
 | `i`   | Insert an Org link (or copy to kill-ring in read-only buffers) |
 | `I`   | Fetch and display the image service `info.json` (canvas detail)|
+| `T`   | Open an OCR sidecar for the canvas (canvas detail)             |
+| `R`   | Toggle extracted / raw payload (OCR buffer)                    |
 | `J`   | Show raw JSON                                                  |
 | `g`   | Refresh                                                        |
 | `q`   | `quit-window`                                                  |
@@ -244,6 +248,21 @@ In Lisp:
 ```
 
 `xiiif-image-info-url` returns the `info.json` endpoint of a service.
+
+### OCR sidecars
+
+When a canvas's `seeAlso` array links an OCR file (ALTO XML, hOCR
+HTML, or plain text), `T` (`xiiif-show-ocr`) fetches it and opens
+a `*XIIIF OCR*` buffer with the extracted text. `R` toggles between
+the extracted rendering and the raw source, `y` copies the source
+URL, `q` buries the buffer.
+
+Format detection uses the `seeAlso` `format` mime type (with common
+aliases for ALTO) and falls back to the `profile` URI when the mime
+type is missing. Extraction is regex-based: every ALTO
+`<String CONTENT="…"/>` is collected, with line breaks inserted at
+each `</TextLine>`; hOCR falls back to a tag-stripping pass.
+Disable extraction globally with `xiiif-ocr-extract-text`.
 
 ### Inspecting `info.json`
 
@@ -336,6 +355,7 @@ xiiif/
   xiiif-image.el    ; IIIF Image API URL builder, download
   xiiif-ui.el       ; major modes & buffers
   xiiif-org.el      ; Org link / metadata insertion
+  xiiif-ocr.el      ; OCR / ALTO / hOCR sidecar extraction
   tests/            ; ERT tests
   examples/         ; sample manifest + collection fixtures
 ```
@@ -349,6 +369,7 @@ xiiif/
 | `xiiif-image`   | `xiiif-image-url`, `xiiif-image-info-url`, `xiiif-image-download`, `xiiif-image-fetch-info`, `xiiif-image-fetch-info-async`, and the `xiiif-image-info` parser. |
 | `xiiif-ui`      | Five derived modes; renders all xiiif buffers. |
 | `xiiif-org`     | `xiiif-org-insert-*` and the underlying link / metadata-block helpers. |
+| `xiiif-ocr`     | `xiiif-canvas-ocr-refs`, `xiiif-ocr-fetch-sync`, `xiiif-ocr-extract-text`. |
 
 ## Customization
 
@@ -432,6 +453,7 @@ emacs -batch -L . -L tests \
       -l tests/xiiif-api-test.el \
       -l tests/xiiif-core-test.el \
       -l tests/xiiif-image-test.el \
+      -l tests/xiiif-ocr-test.el \
       -f ert-run-tests-batch-and-exit
 ```
 
@@ -459,8 +481,9 @@ long-term plan. Highlights of the next sprints:
 - **0.2** — async fetch ✅, Collections ✅, `info.json` integration ✅,
   structures/ranges navigation, inline thumbnail preview,
   finer-grained HTTP error reporting.
-- **0.3** — bulk derivative export, `org-capture` template, citation
-  export (BibTeX / CSL-JSON), annotation fetch, OCR/ALTO sidecars.
+- **0.3** — OCR/ALTO sidecars ✅, bulk derivative export,
+  `org-capture` template, citation export (BibTeX / CSL-JSON),
+  annotation fetch.
 - **0.4** — source registry (Gallica, LoC, Wellcome, DPLA…), hooks
   and per-server profiles.
 

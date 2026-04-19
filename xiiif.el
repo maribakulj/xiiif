@@ -33,6 +33,7 @@
 ;;
 ;;   M-x xiiif-show-raw-json      inspect the underlying JSON
 ;;   M-x xiiif-show-info-json     inspect the Image API info.json
+;;   M-x xiiif-show-ocr           open an OCR sidecar for a canvas
 ;;   M-x xiiif-refresh            re-fetch the current manifest
 ;;   M-x xiiif-open-recent        pick from recently opened manifests
 ;;   M-x xiiif-retry-last         re-issue the last failed fetch
@@ -46,6 +47,7 @@
 (require 'xiiif-core)
 (require 'xiiif-cache)
 (require 'xiiif-image)
+(require 'xiiif-ocr)
 (require 'xiiif-ui)
 (require 'xiiif-org)
 
@@ -207,6 +209,42 @@ or nil to use the contextual canvas."
        (xiiif-ui-render-info info)
        (message "xiiif: loaded info.json for %s"
                 (or (xiiif-image-info-id info) "image service"))))))
+
+;;;###autoload
+(defun xiiif-show-ocr ()
+  "Fetch and display an OCR sidecar (ALTO / hOCR / plain text).
+
+Inspects the contextual canvas's `seeAlso' array for a reference
+with a recognisable OCR format, prompts when several are available,
+and then renders the payload in `*XIIIF OCR*'.  `R' in the sidecar
+toggles between extracted text and the raw source."
+  (interactive)
+  (let* ((canvas (xiiif--require-canvas))
+         (refs   (xiiif-canvas-ocr-refs canvas)))
+    (unless refs
+      (user-error "Canvas has no OCR seeAlso reference"))
+    (let* ((choice
+            (cond
+             ((= 1 (length refs)) (car refs))
+             (t (let* ((labels (mapcar
+                                (lambda (r)
+                                  (format "%s  [%s]  %s"
+                                          (plist-get r :format)
+                                          (plist-get r :url)
+                                          (or (plist-get r :label) "")))
+                                refs))
+                       (pick (completing-read "OCR source: " labels nil t)))
+                  (nth (cl-position pick labels :test #'equal) refs))))
+           (url    (plist-get choice :url))
+           (format (plist-get choice :format)))
+      (message "xiiif: fetching %s..." url)
+      (condition-case err
+          (let ((body (xiiif-ocr-fetch-sync url)))
+            (xiiif-ui-render-ocr url format body)
+            (message "xiiif: loaded %s OCR (%d bytes)"
+                     format (length body)))
+        (xiiif-error
+         (message "%s" (xiiif-api-error-hint err)))))))
 
 ;;;###autoload
 (defun xiiif-copy-manifest-url ()

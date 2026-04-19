@@ -28,12 +28,14 @@
 (require 'xiiif-core)
 (require 'xiiif-cache)
 (require 'xiiif-image)
+(require 'xiiif-ocr)
 
 (defconst xiiif-ui--manifest-buffer   "*XIIIF Manifest*")
 (defconst xiiif-ui--canvases-buffer   "*XIIIF Canvases*")
 (defconst xiiif-ui--canvas-buffer     "*XIIIF Canvas*")
 (defconst xiiif-ui--collection-buffer "*XIIIF Collection*")
 (defconst xiiif-ui--info-buffer       "*XIIIF Image Info*")
+(defconst xiiif-ui--ocr-buffer        "*XIIIF OCR*")
 (defconst xiiif-ui--json-buffer       "*XIIIF JSON*")
 
 (defface xiiif-heading
@@ -237,6 +239,7 @@
     (define-key map (kbd "d")   #'xiiif-download-image)
     (define-key map (kbd "i")   #'xiiif-insert-org-link)
     (define-key map (kbd "I")   #'xiiif-show-info-json)
+    (define-key map (kbd "T")   #'xiiif-show-ocr)
     (define-key map (kbd "J")   #'xiiif-show-raw-json)
     (define-key map (kbd "g")   #'xiiif-refresh)
     (define-key map (kbd "q")   #'quit-window)
@@ -497,6 +500,80 @@ Prompts for size and destination; other parameters take defaults."
   (xiiif-ui-show-json (xiiif-image-info-raw xiiif-ui--info)
                       (or (xiiif-image-info-id xiiif-ui--info)
                           "info.json")))
+
+
+;;; ---------- OCR sidecar ----------
+
+(defvar xiiif-ocr-mode-map
+  (let ((map (make-sparse-keymap)))
+    (define-key map (kbd "g") #'xiiif-refresh)
+    (define-key map (kbd "y") #'xiiif-ui--ocr-copy-url)
+    (define-key map (kbd "R") #'xiiif-ui--ocr-toggle-raw)
+    (define-key map (kbd "q") #'quit-window)
+    map)
+  "Keymap for `xiiif-ocr-mode'.")
+
+(define-derived-mode xiiif-ocr-mode special-mode "XIIIF-OCR"
+  "Major mode for the xiiif OCR sidecar buffer."
+  (buffer-disable-undo)
+  (setq-local truncate-lines nil)
+  (visual-line-mode 1))
+
+(defvar-local xiiif-ui--ocr-url nil
+  "Source URL of the OCR payload currently rendered.")
+
+(defvar-local xiiif-ui--ocr-format nil
+  "Format key (`alto', `hocr', `text' or nil) of the current OCR payload.")
+
+(defvar-local xiiif-ui--ocr-body nil
+  "Raw body of the OCR payload currently rendered.")
+
+(defvar-local xiiif-ui--ocr-extract t
+  "Whether the buffer currently shows extracted text rather than raw source.")
+
+(defun xiiif-ui--ocr-redisplay ()
+  "Re-render the current OCR buffer using its local state."
+  (let ((inhibit-read-only t)
+        (body (or xiiif-ui--ocr-body "")))
+    (erase-buffer)
+    (xiiif-ui--insert-hints
+     '(("y" . "copy URL") ("R" . "toggle raw")
+       ("g" . "refresh")  ("q" . "quit")))
+    (xiiif-ui--insert-heading
+     (format "OCR  [%s]%s"
+             (or xiiif-ui--ocr-format 'unknown)
+             (if xiiif-ui--ocr-extract "" "  (raw)")))
+    (xiiif-ui--insert-field "URL" xiiif-ui--ocr-url)
+    (insert "\n")
+    (insert (if xiiif-ui--ocr-extract
+                (xiiif-ocr-extract-text body xiiif-ui--ocr-format)
+              body))
+    (goto-char (point-min))))
+
+(defun xiiif-ui-render-ocr (url format body)
+  "Render OCR payload BODY fetched from URL with FORMAT in a sidecar buffer."
+  (let ((buf (get-buffer-create xiiif-ui--ocr-buffer)))
+    (with-current-buffer buf
+      (xiiif-ocr-mode)
+      (setq-local xiiif-ui--ocr-url url)
+      (setq-local xiiif-ui--ocr-format format)
+      (setq-local xiiif-ui--ocr-body body)
+      (setq-local xiiif-ui--ocr-extract xiiif-ocr-extract-text)
+      (xiiif-ui--ocr-redisplay))
+    (pop-to-buffer-same-window buf)))
+
+(defun xiiif-ui--ocr-copy-url ()
+  "Copy the source URL of the current OCR buffer to the kill-ring."
+  (interactive)
+  (unless xiiif-ui--ocr-url (user-error "No OCR URL here"))
+  (kill-new xiiif-ui--ocr-url)
+  (message "Copied %s" xiiif-ui--ocr-url))
+
+(defun xiiif-ui--ocr-toggle-raw ()
+  "Toggle between extracted text and the raw OCR source."
+  (interactive)
+  (setq xiiif-ui--ocr-extract (not xiiif-ui--ocr-extract))
+  (xiiif-ui--ocr-redisplay))
 
 
 ;;; ---------- raw JSON ----------
