@@ -22,6 +22,7 @@
 (require 'json)
 (require 'url)
 (require 'url-http)
+(require 'xiiif-profiles)
 
 (define-error 'xiiif-error "xiiif error")
 (define-error 'xiiif-network-error "xiiif network error" 'xiiif-error)
@@ -85,10 +86,14 @@ Signals `xiiif-http-error' on non-2xx responses and
       (signal 'xiiif-http-error (list url status)))
     (xiiif-api--parse-json (xiiif-api--decode-body) url)))
 
-(defun xiiif-api--request-headers ()
-  "Return the HTTP request header alist used by every xiiif call."
-  `(("Accept"     . "application/ld+json, application/json")
-    ("User-Agent" . ,xiiif-api-user-agent)))
+(defun xiiif-api--request-headers (&optional url)
+  "Return the HTTP request header alist used by every xiiif call.
+When URL matches an entry in `xiiif-server-profiles', any headers
+declared by that profile are appended."
+  (append
+   `(("Accept"     . "application/ld+json, application/json")
+     ("User-Agent" . ,xiiif-api-user-agent))
+   (xiiif-profile-headers url)))
 
 (defun xiiif-api-fetch-json (url)
   "Fetch URL synchronously and return parsed JSON.
@@ -100,7 +105,7 @@ Signals `xiiif-network-error' on transport failure,
 For a non-blocking version, see `xiiif-api-fetch-json-async'."
   (unless (xiiif-api--valid-url-p url)
     (signal 'xiiif-network-error (list url "invalid URL")))
-  (let* ((url-request-extra-headers (xiiif-api--request-headers))
+  (let* ((url-request-extra-headers (xiiif-api--request-headers url))
          (url-mime-accept-string
           "application/ld+json, application/json")
          (buffer (condition-case err
@@ -168,7 +173,7 @@ buffers and UI directly."
   (let ((errback (or errback #'xiiif-api--default-errback)))
     (if (not (xiiif-api--valid-url-p url))
         (funcall errback (list 'xiiif-network-error url "invalid URL"))
-      (let ((url-request-extra-headers (xiiif-api--request-headers))
+      (let ((url-request-extra-headers (xiiif-api--request-headers url))
             (url-mime-accept-string
              "application/ld+json, application/json"))
         (condition-case err
@@ -201,16 +206,19 @@ buffers and UI directly."
 
 (defun xiiif-api-download-file (url destination)
   "Download URL to DESTINATION, overwriting if it exists.
-Returns DESTINATION on success or signals an `xiiif-network-error'."
+Any headers declared by a matching `xiiif-server-profiles' entry
+are applied to the request.  Returns DESTINATION on success or
+signals an `xiiif-network-error'."
   (unless (xiiif-api--valid-url-p url)
     (signal 'xiiif-network-error (list url "invalid URL")))
-  (condition-case err
-      (progn
-        (url-copy-file url destination t)
-        destination)
-    (error
-     (signal 'xiiif-network-error
-             (list url (error-message-string err))))))
+  (let ((url-request-extra-headers (xiiif-api--request-headers url)))
+    (condition-case err
+        (progn
+          (url-copy-file url destination t)
+          destination)
+      (error
+       (signal 'xiiif-network-error
+               (list url (error-message-string err)))))))
 
 (provide 'xiiif-api)
 ;;; xiiif-api.el ends here

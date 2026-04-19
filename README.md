@@ -336,6 +336,7 @@ xiiif/
   xiiif-image.el    ; IIIF Image API URL builder, download
   xiiif-ui.el       ; major modes & buffers
   xiiif-org.el      ; Org link / metadata insertion
+  xiiif-profiles.el ; per-server HTTP / image API overrides
   tests/            ; ERT tests
   examples/         ; sample manifest + collection fixtures
 ```
@@ -385,6 +386,32 @@ All options live under the `xiiif` group (`M-x customize-group RET xiiif`).
 | `xiiif-history-file`  | `~/.emacs.d/xiiif-history.el`        |
 | `xiiif-history-size`  | `25`                                 |
 
+### Per-server profiles
+
+`xiiif-server-profiles` is an alist of `(URL-REGEXP . PLIST)`. The
+first regexp matching a request URL wins. Supported plist keys:
+
+| Key        | Purpose                                                  |
+| ---------- | -------------------------------------------------------- |
+| `:label`   | Free-text identifier shown by diagnostics.               |
+| `:headers` | Alist of extra HTTP headers to attach (auth tokens, etc).|
+| `:image`   | Plist of Image API overrides (`:region`, `:size`, `:rotation`, `:quality`, `:format`). Sits between explicit `xiiif-image-url` args and the global `xiiif-image-default-*` defaults. |
+| `:notes`   | Free text.                                               |
+
+Example — ship a bearer token to a staging host and force PNG
+derivatives from it:
+
+```elisp
+(setq xiiif-server-profiles
+      '(("\\`https://iiif\\.staging\\.example\\.org"
+         :label   "Staging"
+         :headers (("Authorization" . "Bearer hunter2"))
+         :image   (:size "!1024,1024" :format "png"))))
+```
+
+The profile applies uniformly to JSON fetches, `info.json` fetches,
+derivative downloads and bulk export.
+
 ## Error handling
 
 All transport, HTTP and JSON failures are translated into a small
@@ -432,6 +459,7 @@ emacs -batch -L . -L tests \
       -l tests/xiiif-api-test.el \
       -l tests/xiiif-core-test.el \
       -l tests/xiiif-image-test.el \
+      -l tests/xiiif-profiles-test.el \
       -f ert-run-tests-batch-and-exit
 ```
 
@@ -461,8 +489,8 @@ long-term plan. Highlights of the next sprints:
   finer-grained HTTP error reporting.
 - **0.3** — bulk derivative export, `org-capture` template, citation
   export (BibTeX / CSL-JSON), annotation fetch, OCR/ALTO sidecars.
-- **0.4** — source registry (Gallica, LoC, Wellcome, DPLA…), hooks
-  and per-server profiles.
+- **0.4** — source registry (Gallica, LoC, Wellcome, DPLA…), hooks,
+  per-server profiles ✅.
 
 ## Contributing
 

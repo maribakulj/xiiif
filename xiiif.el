@@ -42,6 +42,7 @@
 (require 'cl-lib)
 (require 'subr-x)
 
+(require 'xiiif-profiles)
 (require 'xiiif-api)
 (require 'xiiif-core)
 (require 'xiiif-cache)
