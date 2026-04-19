@@ -30,13 +30,13 @@
 (require 'xiiif-image)
 (require 'xiiif-annotations)
 
-(defconst xiiif-ui--manifest-buffer     "*XIIIF Manifest*")
-(defconst xiiif-ui--canvases-buffer     "*XIIIF Canvases*")
-(defconst xiiif-ui--canvas-buffer       "*XIIIF Canvas*")
-(defconst xiiif-ui--collection-buffer   "*XIIIF Collection*")
-(defconst xiiif-ui--info-buffer         "*XIIIF Image Info*")
-(defconst xiiif-ui--annotations-buffer  "*XIIIF Annotations*")
-(defconst xiiif-ui--json-buffer         "*XIIIF JSON*")
+(defconst xiiif-ui--manifest-buffer   "*XIIIF Manifest*")
+(defconst xiiif-ui--canvases-buffer   "*XIIIF Canvases*")
+(defconst xiiif-ui--canvas-buffer     "*XIIIF Canvas*")
+(defconst xiiif-ui--collection-buffer "*XIIIF Collection*")
+(defconst xiiif-ui--info-buffer       "*XIIIF Image Info*")
+(defconst xiiif-ui--structures-buffer "*XIIIF Structures*")
+(defconst xiiif-ui--json-buffer       "*XIIIF JSON*")
 
 (defface xiiif-heading
   '((t :inherit font-lock-function-name-face :weight bold))
@@ -88,6 +88,7 @@
     (define-key map (kbd "g")   #'xiiif-refresh)
     (define-key map (kbd "RET") #'xiiif-browse-canvases)
     (define-key map (kbd "c")   #'xiiif-browse-canvases)
+    (define-key map (kbd "s")   #'xiiif-show-structures)
     (define-key map (kbd "J")   #'xiiif-show-raw-json)
     (define-key map (kbd "y")   #'xiiif-copy-manifest-url)
     (define-key map (kbd "i")   #'xiiif-insert-org-link)
@@ -131,6 +132,12 @@
           (xiiif-ui--insert-heading
            (format "Canvases (%d)" (length canvases)))
           (insert "Press RET or c to browse.\n"))
+        (let ((structures (xiiif-manifest-structures manifest)))
+          (when structures
+            (insert "\n")
+            (xiiif-ui--insert-heading
+             (format "Structures (%d)" (length structures)))
+            (insert "Press s to open the structural navigator.\n")))
         (goto-char (point-min))))
     (pop-to-buffer-same-window buf)))
 
@@ -144,6 +151,11 @@
     (define-key map (kbd "y")   #'xiiif-ui--copy-image-url-at-point)
     (define-key map (kbd "d")   #'xiiif-ui--download-image-at-point)
     (define-key map (kbd "i")   #'xiiif-ui--insert-org-link-at-point)
+    (define-key map (kbd "m")   #'xiiif-ui--mark-canvas)
+    (define-key map (kbd "u")   #'xiiif-ui--unmark-canvas)
+    (define-key map (kbd "U")   #'xiiif-ui--unmark-all-canvases)
+    (define-key map (kbd "t")   #'xiiif-ui--toggle-mark-canvas)
+    (define-key map (kbd "D")   #'xiiif-download-marked)
     (define-key map (kbd "g")   #'xiiif-refresh)
     (define-key map (kbd "q")   #'quit-window)
     map)
@@ -185,7 +197,7 @@
                                 (xiiif-manifest-title manifest)
                                 (length canvases)))))
     (pop-to-buffer-same-window buf)
-    (message "%d canvas%s   [RET] open  [y] copy  [d] download  [i] org  [g] refresh  [q] quit"
+    (message "%d canvas%s   [RET] open  [y] copy  [d] download  [m] mark  [D] bulk download  [i] org  [g] refresh  [q] quit"
              (length canvases)
              (if (= 1 (length canvases)) "" "es"))))
 
@@ -231,6 +243,62 @@
     (call-interactively #'xiiif-insert-org-link)))
 
 
+;;; ---------- mark helpers ----------
+
+(defconst xiiif-ui--mark-tag "*"
+  "Single-character tag used to mark a canvas in the canvas browser.")
+
+(defun xiiif-ui--canvas-marked-p ()
+  "Return non-nil when the canvas on the current line is marked."
+  (and (derived-mode-p 'xiiif-canvas-list-mode)
+       (save-excursion
+         (beginning-of-line)
+         (char-equal (char-after) (aref xiiif-ui--mark-tag 0)))))
+
+(defun xiiif-ui--mark-canvas ()
+  "Mark the canvas on the current line and advance."
+  (interactive)
+  (unless (xiiif-ui--canvas-at-point)
+    (user-error "No canvas on this line"))
+  (tabulated-list-put-tag xiiif-ui--mark-tag t))
+
+(defun xiiif-ui--unmark-canvas ()
+  "Unmark the canvas on the current line and advance."
+  (interactive)
+  (unless (xiiif-ui--canvas-at-point)
+    (user-error "No canvas on this line"))
+  (tabulated-list-put-tag " " t))
+
+(defun xiiif-ui--toggle-mark-canvas ()
+  "Toggle the mark on the canvas on the current line and advance."
+  (interactive)
+  (if (xiiif-ui--canvas-marked-p)
+      (xiiif-ui--unmark-canvas)
+    (xiiif-ui--mark-canvas)))
+
+(defun xiiif-ui--unmark-all-canvases ()
+  "Remove every mark in the current canvas browser."
+  (interactive)
+  (save-excursion
+    (goto-char (point-min))
+    (while (not (eobp))
+      (when (xiiif-ui--canvas-at-point)
+        (tabulated-list-put-tag " "))
+      (forward-line 1))))
+
+(defun xiiif-ui--marked-canvases ()
+  "Return the list of `xiiif-canvas' structs currently marked."
+  (save-excursion
+    (goto-char (point-min))
+    (let (result)
+      (while (not (eobp))
+        (let ((canvas (xiiif-ui--canvas-at-point)))
+          (when (and canvas (xiiif-ui--canvas-marked-p))
+            (push canvas result)))
+        (forward-line 1))
+      (nreverse result))))
+
+
 ;;; ---------- canvas detail ----------
 
 (defvar xiiif-canvas-mode-map
@@ -251,10 +319,50 @@
   (buffer-disable-undo)
   (setq-local truncate-lines t))
 
+(defcustom xiiif-ui-show-thumbnails t
+  "When non-nil, render the canvas thumbnail inline in the canvas detail buffer.
+The inline preview is only attempted on graphic displays."
+  :type 'boolean
+  :group 'xiiif)
+
+(defcustom xiiif-ui-thumbnail-size "!200,200"
+  "IIIF Image API `size' segment used when synthesizing a canvas thumbnail.
+Only used as a fallback when the canvas does not declare its own
+`thumbnail' field."
+  :type 'string
+  :group 'xiiif)
+
+(defun xiiif-ui--insert-thumbnail-async (canvas buffer marker)
+  "Fetch a thumbnail for CANVAS and insert it at MARKER in BUFFER.
+Does nothing on text-only displays or when CANVAS has no usable URL."
+  (when (and (display-graphic-p)
+             (buffer-live-p buffer))
+    (let ((url (xiiif-canvas-thumbnail-url
+                canvas xiiif-ui-thumbnail-size)))
+      (when url
+        (xiiif-api-fetch-bytes-async
+         url
+         (lambda (bytes)
+           (when (buffer-live-p buffer)
+             (with-current-buffer buffer
+               (save-excursion
+                 (goto-char marker)
+                 (let ((inhibit-read-only t))
+                   (condition-case _
+                       (insert-image (create-image bytes nil t))
+                     (error
+                      (insert
+                       (propertize "(could not render thumbnail)"
+                                   'face 'xiiif-hint)))))))))
+         (lambda (_err) nil))))))
+
 (defun xiiif-ui-render-canvas (canvas)
-  "Render the canvas detail buffer for CANVAS and display it."
+  "Render the canvas detail buffer for CANVAS and display it.
+When `xiiif-ui-show-thumbnails' is non-nil on a graphic display,
+fetches a small preview asynchronously and inserts it at the end."
   (let ((buf (get-buffer-create xiiif-ui--canvas-buffer))
-        (service (xiiif-canvas-image-service canvas)))
+        (service (xiiif-canvas-image-service canvas))
+        thumb-marker)
     (with-current-buffer buf
       (xiiif-canvas-mode)
       (setq-local xiiif-ui--canvas canvas)
@@ -280,8 +388,14 @@
           (insert "\n")
           (xiiif-ui--insert-heading "Default derivative")
           (xiiif-ui--insert-field "URL" (xiiif-image-url canvas)))
+        (when (and xiiif-ui-show-thumbnails (display-graphic-p))
+          (insert "\n")
+          (xiiif-ui--insert-heading "Thumbnail")
+          (setq thumb-marker (point-marker)))
         (goto-char (point-min))))
-    (pop-to-buffer-same-window buf)))
+    (pop-to-buffer-same-window buf)
+    (when thumb-marker
+      (xiiif-ui--insert-thumbnail-async canvas buf thumb-marker))))
 
 (defvar-local xiiif-ui--canvas nil
   "The `xiiif-canvas' backing the current canvas detail buffer.")
@@ -399,6 +513,143 @@ Prompts for size and destination; other parameters take defaults."
            (link   (format "[[%s][%s]]" target label)))
       (kill-new link)
       (message "Copied to kill ring: %s" link))))
+
+
+;;; ---------- structures / ranges ----------
+
+(declare-function xiiif-open-canvas "xiiif" (&optional canvas))
+
+(defvar xiiif-structures-mode-map
+  (let ((map (make-sparse-keymap)))
+    (define-key map (kbd "RET") #'xiiif-ui--follow-structure-at-point)
+    (define-key map (kbd "o")   #'xiiif-ui--follow-structure-at-point)
+    (define-key map (kbd "n")   #'xiiif-ui--next-structure-line)
+    (define-key map (kbd "p")   #'xiiif-ui--prev-structure-line)
+    (define-key map (kbd "TAB") #'xiiif-ui--next-structure-line)
+    (define-key map (kbd "<backtab>") #'xiiif-ui--prev-structure-line)
+    (define-key map (kbd "g")   #'xiiif-refresh)
+    (define-key map (kbd "J")   #'xiiif-show-raw-json)
+    (define-key map (kbd "q")   #'quit-window)
+    map)
+  "Keymap for `xiiif-structures-mode'.")
+
+(define-derived-mode xiiif-structures-mode special-mode "XIIIF-Structures"
+  "Major mode for browsing the structural hierarchy of a IIIF manifest."
+  (buffer-disable-undo)
+  (setq-local truncate-lines t))
+
+(defvar-local xiiif-ui--structures-manifest nil
+  "The `xiiif-manifest' backing the current structures buffer.")
+
+(defface xiiif-structure-canvas
+  '((t :inherit font-lock-string-face))
+  "Face for canvas lines in the structures buffer.")
+
+(defun xiiif-ui--insert-structure-canvas (indent canvas-id manifest)
+  "Insert one canvas line at INDENT referencing CANVAS-ID from MANIFEST."
+  (let* ((canvas (xiiif-manifest-find-canvas manifest canvas-id))
+         (label (if canvas
+                    (xiiif-canvas-title canvas)
+                  (or canvas-id "(unknown canvas)")))
+         (begin (point)))
+    (insert (make-string indent ?\s)
+            (propertize (format "- %s" label)
+                        'face 'xiiif-structure-canvas) "\n")
+    (add-text-properties begin (1- (point))
+                         (list 'xiiif-structure-kind 'canvas
+                               'xiiif-structure-id canvas-id))))
+
+(defun xiiif-ui--insert-structure-range (indent range manifest)
+  "Insert RANGE as a header line at INDENT, then recurse into its children."
+  (let ((begin (point)))
+    (insert (make-string indent ?\s)
+            (propertize (format "* %s" (xiiif-range-title range))
+                        'face 'xiiif-heading) "\n")
+    (add-text-properties begin (1- (point))
+                         (list 'xiiif-structure-kind 'range
+                               'xiiif-structure-range range)))
+  (dolist (cid (xiiif-range-canvas-ids range))
+    (xiiif-ui--insert-structure-canvas (+ indent 2) cid manifest))
+  (dolist (sub (xiiif-range-sub-ranges range))
+    (xiiif-ui--insert-structure-range (+ indent 2) sub manifest)))
+
+(defun xiiif-ui-render-structures (manifest)
+  "Render MANIFEST's structures into the dedicated buffer and display it."
+  (let ((buf (get-buffer-create xiiif-ui--structures-buffer))
+        (structures (xiiif-manifest-structures manifest)))
+    (unless structures
+      (user-error "Manifest has no structures / ranges"))
+    (with-current-buffer buf
+      (xiiif-structures-mode)
+      (setq-local xiiif-ui--structures-manifest manifest)
+      (let ((inhibit-read-only t))
+        (erase-buffer)
+        (xiiif-ui--insert-hints
+         '(("RET" . "open")   ("n/p" . "next/prev")
+           ("J" . "raw JSON") ("g" . "refresh")
+           ("q" . "quit")))
+        (xiiif-ui--insert-heading
+         (format "%s  -  Structures (%d)"
+                 (xiiif-manifest-title manifest)
+                 (length structures)))
+        (dolist (r structures)
+          (xiiif-ui--insert-structure-range 0 r manifest))
+        (goto-char (point-min))))
+    (pop-to-buffer-same-window buf)))
+
+(defun xiiif-ui--structure-kind-at-point ()
+  "Return (KIND . VALUE) for the structure line at point, or nil."
+  (let ((kind (get-text-property (point) 'xiiif-structure-kind)))
+    (pcase kind
+      ('canvas (cons 'canvas (get-text-property (point) 'xiiif-structure-id)))
+      ('range  (cons 'range  (get-text-property (point) 'xiiif-structure-range))))))
+
+(defun xiiif-ui--follow-structure-at-point ()
+  "Open the canvas or the first canvas of the range at point."
+  (interactive)
+  (let ((entry (xiiif-ui--structure-kind-at-point))
+        (manifest xiiif-ui--structures-manifest))
+    (unless entry
+      (user-error "No structure entry on this line"))
+    (let ((canvas-id
+           (pcase (car entry)
+             ('canvas (cdr entry))
+             ('range  (xiiif-range-first-canvas-id (cdr entry))))))
+      (unless canvas-id
+        (user-error "Nothing to open from this entry"))
+      (let ((canvas (xiiif-manifest-find-canvas manifest canvas-id)))
+        (unless canvas
+          (user-error "Canvas %s is not listed in the current manifest"
+                      canvas-id))
+        (xiiif-open-canvas canvas)))))
+
+(defun xiiif-ui--next-structure-line (&optional count)
+  "Move forward COUNT structure entries."
+  (interactive "p")
+  (dotimes (_ (or count 1))
+    (let (found)
+      (save-excursion
+        (forward-line 1)
+        (while (and (not (eobp))
+                    (not (get-text-property (point) 'xiiif-structure-kind)))
+          (forward-line 1))
+        (when (get-text-property (point) 'xiiif-structure-kind)
+          (setq found (point))))
+      (when found (goto-char found)))))
+
+(defun xiiif-ui--prev-structure-line (&optional count)
+  "Move backward COUNT structure entries."
+  (interactive "p")
+  (dotimes (_ (or count 1))
+    (let (found)
+      (save-excursion
+        (forward-line -1)
+        (while (and (not (bobp))
+                    (not (get-text-property (point) 'xiiif-structure-kind)))
+          (forward-line -1))
+        (when (get-text-property (point) 'xiiif-structure-kind)
+          (setq found (point))))
+      (when found (goto-char found)))))
 
 
 ;;; ---------- image info.json ----------
