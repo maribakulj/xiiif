@@ -25,9 +25,9 @@ deliberately speculative.
 
 ## 0.3 — DH / GLAM conveniences
 
-- **Bulk derivative export.** Mark canvases in the browser and dump
-  all selected derivatives to a directory with a uniform naming
-  scheme.
+- [x] **Bulk derivative export.** Mark canvases in the browser and
+  dump all selected derivatives to a directory with a uniform naming
+  scheme. *(shipped)*
 - **Org-capture template.** Ship an `org-capture` template that
   produces a standard note from a manifest, ready to drop in a
   research journal.

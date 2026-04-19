@@ -27,6 +27,7 @@
 ;;   M-x xiiif-open-canvas        open the canvas at point
 ;;   M-x xiiif-copy-image-url     copy a derivative URL
 ;;   M-x xiiif-download-image     download a derivative image
+;;   M-x xiiif-download-marked    bulk-download marked canvases
 ;;   M-x xiiif-insert-org-link    insert a link into Org
 ;;
 ;; Auxiliary commands:
@@ -194,6 +195,66 @@ quality and format instead of using defaults."
   "Download an IIIF Image API derivative of the contextual canvas."
   (interactive)
   (xiiif-ui-download-canvas-image (xiiif--require-canvas)))
+
+;;;###autoload
+(defun xiiif-download-marked (directory &optional size format)
+  "Download every marked canvas in the canvas browser to DIRECTORY.
+
+SIZE and FORMAT override the defaults from `xiiif-image-default-size'
+and `xiiif-image-default-format'.  Files are named
+\"<INDEX>-<SLUG>.<FORMAT>\" where SLUG is derived from the canvas
+label.  Canvases without an image service are skipped silently."
+  (interactive
+   (progn
+     (unless (derived-mode-p 'xiiif-canvas-list-mode)
+       (user-error "Run this from the canvas browser"))
+     (list (read-directory-name "Download marked to: "
+                                xiiif-image-download-directory)
+           (read-string (format "Size (default %s): "
+                                xiiif-image-default-size)
+                        nil nil xiiif-image-default-size)
+           (read-string (format "Format (default %s): "
+                                xiiif-image-default-format)
+                        nil nil xiiif-image-default-format))))
+  (let ((marked (xiiif-ui--marked-canvases)))
+    (unless marked
+      (user-error "No canvases marked (press m or t on rows first)"))
+    (let ((dir (expand-file-name directory)))
+      (unless (file-directory-p dir) (make-directory dir t))
+      (let ((progress (make-progress-reporter
+                       (format "xiiif: downloading %d canvas%s"
+                               (length marked)
+                               (if (= 1 (length marked)) "" "es"))
+                       0 (length marked)))
+            (saved 0)
+            (skipped 0))
+        (cl-loop
+         for canvas in marked
+         for index from 1
+         do
+         (if (not (xiiif-canvas-image-service canvas))
+             (cl-incf skipped)
+           (let ((dest (expand-file-name
+                        (format "%03d-%s.%s"
+                                index
+                                (xiiif-canvas-filesystem-slug canvas)
+                                format)
+                        dir)))
+             (condition-case err
+                 (progn
+                   (xiiif-image-download canvas dest :size size :format format)
+                   (cl-incf saved))
+               (error
+                (message "xiiif: skipped %s (%s)"
+                         (xiiif-canvas-title canvas)
+                         (error-message-string err))
+                (cl-incf skipped))))
+           (progress-reporter-update progress index)))
+        (progress-reporter-done progress)
+        (message "xiiif: saved %d canvas%s to %s%s"
+                 saved (if (= 1 saved) "" "es") dir
+                 (if (> skipped 0)
+                     (format " (%d skipped)" skipped) ""))))))
 
 ;;;###autoload
 (defun xiiif-show-info-json (&optional target)

@@ -149,6 +149,7 @@ All commands are autoloaded.
 | `xiiif-open-canvas`         | Open the canvas at point or the current canvas.                  |
 | `xiiif-copy-image-url`      | Copy a derivative URL. `C-u` prompts for all parameters.         |
 | `xiiif-download-image`      | Download a derivative for the current/contextual canvas.         |
+| `xiiif-download-marked`     | Bulk-download every marked canvas in the browser to a directory. |
 | `xiiif-show-info-json`      | Fetch and display the Image API `info.json` for a canvas.        |
 | `xiiif-show-structures`     | Open the structural navigator (Ranges) for the current manifest. |
 | `xiiif-insert-org-link`     | Insert a manifest, canvas, image link, or metadata block.        |
@@ -188,6 +189,8 @@ Common bindings:
 | `o`   | Same as `RET` in list buffers                                  |
 | `y`   | Copy the contextually useful URL                               |
 | `d`   | Download the contextual image (canvas browser, canvas detail)  |
+| `m` / `u` / `U` / `t` | Mark / unmark / unmark-all / toggle-mark a canvas (canvas browser) |
+| `D`   | Bulk-download every marked canvas (canvas browser)             |
 | `i`   | Insert an Org link (or copy to kill-ring in read-only buffers) |
 | `I`   | Fetch and display the image service `info.json` (canvas detail)|
 | `J`   | Show raw JSON                                                  |
