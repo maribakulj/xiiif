@@ -37,6 +37,7 @@
 ;;   M-x xiiif-refresh            re-fetch the current manifest
 ;;   M-x xiiif-open-recent        pick from recently opened manifests
 ;;   M-x xiiif-retry-last         re-issue the last failed fetch
+;;   M-x xiiif-export-citation    export a BibTeX or CSL-JSON citation
 
 ;;; Code:
 
@@ -49,6 +50,7 @@
 (require 'xiiif-image)
 (require 'xiiif-ui)
 (require 'xiiif-org)
+(require 'xiiif-cite)
 
 (defgroup xiiif nil
   "Emacs-native IIIF workbench."
@@ -270,6 +272,15 @@ or nil to use the contextual canvas."
                 (or (xiiif-image-info-id info) "image service"))))))
 
 ;;;###autoload
+(defun xiiif-show-structures ()
+  "Open the structural navigator for the current manifest.
+Shows `structures' (v2) and `Range' (v3) hierarchies in a dedicated
+`*XIIIF Structures*' buffer.  RET descends into a range's first
+canvas or opens the canvas at point."
+  (interactive)
+  (xiiif-ui-render-structures (xiiif--require-manifest)))
+
+;;;###autoload
 (defun xiiif-copy-manifest-url ()
   "Copy the URL of the current manifest to the kill ring."
   (interactive)
@@ -348,7 +359,8 @@ Signals `user-error' if there is nothing to refresh."
                  (or xiiif-current-collection
                      (user-error "No collection in this buffer to refresh"))))
             mode))
-     ((or (memq mode '(xiiif-manifest-mode xiiif-canvas-list-mode xiiif-canvas-mode))
+     ((or (memq mode '(xiiif-manifest-mode xiiif-canvas-list-mode
+                       xiiif-canvas-mode xiiif-structures-mode))
           xiiif-current-manifest)
       (cons (xiiif-manifest-url
              (or xiiif-current-manifest
@@ -383,6 +395,10 @@ detail buffer (re-resolved by id) and the collection browser."
                (progn (xiiif-cache-set-canvas match)
                       (xiiif-ui-render-canvas match))
              (xiiif-ui-render-manifest fresh))))
+        ((eq mode 'xiiif-structures-mode)
+         (if (xiiif-manifest-structures fresh)
+             (xiiif-ui-render-structures fresh)
+           (xiiif-ui-render-manifest fresh)))
         (t (xiiif-ui-render-manifest fresh)))
        (message "xiiif: refreshed %s" (xiiif-manifest-title fresh)))
      (lambda (fresh)
@@ -402,6 +418,18 @@ detail buffer (re-resolved by id) and the collection browser."
     (xiiif-open-manifest url)))
 
 ;;;###autoload
+(defun xiiif-toggle-thumbnails ()
+  "Toggle inline thumbnail rendering in the canvas detail buffer.
+Re-renders the current canvas, if any, to pick up the new setting."
+  (interactive)
+  (setq xiiif-ui-show-thumbnails (not xiiif-ui-show-thumbnails))
+  (message "xiiif: thumbnails %s"
+           (if xiiif-ui-show-thumbnails "enabled" "disabled"))
+  (when (and xiiif-current-canvas
+             (derived-mode-p 'xiiif-canvas-mode))
+    (xiiif-ui-render-canvas xiiif-current-canvas)))
+
+;;;###autoload
 (defun xiiif-retry-last ()
   "Re-issue the most recent failed xiiif fetch.
 Uses the URL stored in `xiiif-api-last-error'.  The error slot is
@@ -414,6 +442,30 @@ cleared before the retry, so a second failure is reported fresh."
       (user-error "Last error has no URL to retry"))
     (setq xiiif-api-last-error nil)
     (xiiif-open-manifest url)))
+
+;;;###autoload
+(defun xiiif-export-citation (&optional format)
+  "Export the current manifest as a citation in FORMAT.
+
+FORMAT is `bibtex' or `csl-json'; interactively the user is prompted.
+When the current buffer is writable the citation is inserted at point;
+otherwise it is copied to the kill ring and a notification is shown."
+  (interactive
+   (list (intern (completing-read
+                  "Citation format: "
+                  '("bibtex" "csl-json") nil t nil nil "bibtex"))))
+  (let* ((manifest (xiiif--require-manifest))
+         (text (pcase format
+                 ('bibtex   (xiiif-citation-bibtex manifest))
+                 ('csl-json (xiiif-citation-csl-json manifest))
+                 (_ (user-error "Unknown citation format: %s" format)))))
+    (if buffer-read-only
+        (progn
+          (kill-new text)
+          (message "xiiif: %s citation copied to kill ring" format))
+      (insert text)
+      (unless (string-suffix-p "\n" text) (insert "\n"))
+      (message "xiiif: %s citation inserted" format))))
 
 ;; Load the persisted history (if any) eagerly so
 ;; `xiiif-open-manifest' can default to the last URL.
