@@ -237,6 +237,21 @@ Signals `xiiif-parse-error' if JSON does not look like a manifest."
         (format "%d. %s" index lbl)
       lbl)))
 
+(defun xiiif-canvas-filesystem-slug (canvas)
+  "Return a filesystem-safe slug for CANVAS.
+Derived from the canvas label, then the canvas id tail, with
+non-`[:alnum:]._-' runs collapsed to underscores.  Never returns
+an empty string."
+  (let* ((raw (or (let ((s (xiiif-label-string (xiiif-canvas-label canvas))))
+                    (and (not (string-empty-p s)) s))
+                  (when-let ((id (xiiif-canvas-id canvas)))
+                    (car (last (split-string id "/" t))))
+                  "canvas"))
+         (slug (replace-regexp-in-string
+                "[^[:alnum:]._-]+" "_" raw)))
+    (setq slug (string-trim slug "_" "_"))
+    (if (string-empty-p slug) "canvas" slug)))
+
 
 
 ;;; ---------- collections ----------

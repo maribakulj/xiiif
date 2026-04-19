@@ -212,5 +212,30 @@
                            "http://x/m")
    :type 'xiiif-parse-error))
 
+
+
+;;; ---- filesystem slugs ----
+
+(ert-deftest xiiif-canvas-filesystem-slug/uses-label ()
+  (let ((c (make-xiiif-canvas
+            :id "http://x/c1"
+            :label '((en . ["Folio 1r"])))))
+    (should (equal "Folio_1r" (xiiif-canvas-filesystem-slug c)))))
+
+(ert-deftest xiiif-canvas-filesystem-slug/label-strips-punctuation ()
+  (let ((c (make-xiiif-canvas
+            :label '((en . ["Page #42 / cover!"])))))
+    (should (equal "Page_42_cover"
+                   (xiiif-canvas-filesystem-slug c)))))
+
+(ert-deftest xiiif-canvas-filesystem-slug/falls-back-to-id-tail ()
+  (let ((c (make-xiiif-canvas
+            :id "http://example.org/iiif/book/canvas/p5")))
+    (should (equal "p5" (xiiif-canvas-filesystem-slug c)))))
+
+(ert-deftest xiiif-canvas-filesystem-slug/never-empty ()
+  (should (equal "canvas"
+                 (xiiif-canvas-filesystem-slug (make-xiiif-canvas)))))
+
 (provide 'xiiif-core-test)
 ;;; xiiif-core-test.el ends here

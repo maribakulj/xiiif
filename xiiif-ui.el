@@ -142,6 +142,11 @@
     (define-key map (kbd "y")   #'xiiif-ui--copy-image-url-at-point)
     (define-key map (kbd "d")   #'xiiif-ui--download-image-at-point)
     (define-key map (kbd "i")   #'xiiif-ui--insert-org-link-at-point)
+    (define-key map (kbd "m")   #'xiiif-ui--mark-canvas)
+    (define-key map (kbd "u")   #'xiiif-ui--unmark-canvas)
+    (define-key map (kbd "U")   #'xiiif-ui--unmark-all-canvases)
+    (define-key map (kbd "t")   #'xiiif-ui--toggle-mark-canvas)
+    (define-key map (kbd "D")   #'xiiif-download-marked)
     (define-key map (kbd "g")   #'xiiif-refresh)
     (define-key map (kbd "q")   #'quit-window)
     map)
@@ -183,7 +188,7 @@
                                 (xiiif-manifest-title manifest)
                                 (length canvases)))))
     (pop-to-buffer-same-window buf)
-    (message "%d canvas%s   [RET] open  [y] copy  [d] download  [i] org  [g] refresh  [q] quit"
+    (message "%d canvas%s   [RET] open  [y] copy  [d] download  [m] mark  [D] bulk download  [i] org  [g] refresh  [q] quit"
              (length canvases)
              (if (= 1 (length canvases)) "" "es"))))
 
@@ -227,6 +232,62 @@
     (unless canvas (user-error "No canvas on this line"))
     (xiiif-cache-set-canvas canvas)
     (call-interactively #'xiiif-insert-org-link)))
+
+
+;;; ---------- mark helpers ----------
+
+(defconst xiiif-ui--mark-tag "*"
+  "Single-character tag used to mark a canvas in the canvas browser.")
+
+(defun xiiif-ui--canvas-marked-p ()
+  "Return non-nil when the canvas on the current line is marked."
+  (and (derived-mode-p 'xiiif-canvas-list-mode)
+       (save-excursion
+         (beginning-of-line)
+         (char-equal (char-after) (aref xiiif-ui--mark-tag 0)))))
+
+(defun xiiif-ui--mark-canvas ()
+  "Mark the canvas on the current line and advance."
+  (interactive)
+  (unless (xiiif-ui--canvas-at-point)
+    (user-error "No canvas on this line"))
+  (tabulated-list-put-tag xiiif-ui--mark-tag t))
+
+(defun xiiif-ui--unmark-canvas ()
+  "Unmark the canvas on the current line and advance."
+  (interactive)
+  (unless (xiiif-ui--canvas-at-point)
+    (user-error "No canvas on this line"))
+  (tabulated-list-put-tag " " t))
+
+(defun xiiif-ui--toggle-mark-canvas ()
+  "Toggle the mark on the canvas on the current line and advance."
+  (interactive)
+  (if (xiiif-ui--canvas-marked-p)
+      (xiiif-ui--unmark-canvas)
+    (xiiif-ui--mark-canvas)))
+
+(defun xiiif-ui--unmark-all-canvases ()
+  "Remove every mark in the current canvas browser."
+  (interactive)
+  (save-excursion
+    (goto-char (point-min))
+    (while (not (eobp))
+      (when (xiiif-ui--canvas-at-point)
+        (tabulated-list-put-tag " "))
+      (forward-line 1))))
+
+(defun xiiif-ui--marked-canvases ()
+  "Return the list of `xiiif-canvas' structs currently marked."
+  (save-excursion
+    (goto-char (point-min))
+    (let (result)
+      (while (not (eobp))
+        (let ((canvas (xiiif-ui--canvas-at-point)))
+          (when (and canvas (xiiif-ui--canvas-marked-p))
+            (push canvas result)))
+        (forward-line 1))
+      (nreverse result))))
 
 
 ;;; ---------- canvas detail ----------

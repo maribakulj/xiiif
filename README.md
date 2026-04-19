@@ -148,6 +148,7 @@ All commands are autoloaded.
 | `xiiif-open-canvas`         | Open the canvas at point or the current canvas.                  |
 | `xiiif-copy-image-url`      | Copy a derivative URL. `C-u` prompts for all parameters.         |
 | `xiiif-download-image`      | Download a derivative for the current/contextual canvas.         |
+| `xiiif-download-marked`     | Bulk-download every marked canvas in the browser to a directory. |
 | `xiiif-show-info-json`      | Fetch and display the Image API `info.json` for a canvas.        |
 | `xiiif-insert-org-link`     | Insert a manifest, canvas, image link, or metadata block.        |
 
@@ -183,6 +184,8 @@ Common bindings:
 | `o`   | Same as `RET` in list buffers                                  |
 | `y`   | Copy the contextually useful URL                               |
 | `d`   | Download the contextual image (canvas browser, canvas detail)  |
+| `m` / `u` / `U` / `t` | Mark / unmark / unmark-all / toggle-mark a canvas (canvas browser) |
+| `D`   | Bulk-download every marked canvas (canvas browser)             |
 | `i`   | Insert an Org link (or copy to kill-ring in read-only buffers) |
 | `I`   | Fetch and display the image service `info.json` (canvas detail)|
 | `J`   | Show raw JSON                                                  |
@@ -244,6 +247,21 @@ In Lisp:
 ```
 
 `xiiif-image-info-url` returns the `info.json` endpoint of a service.
+
+### Bulk derivative export
+
+Inside the canvas browser, `m` marks the canvas on the current line
+(the mark column in the left padding shows `*`), `u` unmarks, `t`
+toggles, and `U` clears every mark. Once you have a selection,
+`D` (`xiiif-download-marked`) prompts for a destination directory,
+size and format and then saves every marked canvas as
+`<INDEX>-<SLUG>.<FORMAT>`. The slug is derived from the canvas
+label (falling back to the id tail), cleaned of non-alphanumeric
+characters.
+
+A progress reporter streams the download in the echo area; canvases
+without a usable image service are skipped with a message, and
+per-file errors do not abort the batch.
 
 ### Inspecting `info.json`
 
@@ -459,8 +477,9 @@ long-term plan. Highlights of the next sprints:
 - **0.2** — async fetch ✅, Collections ✅, `info.json` integration ✅,
   structures/ranges navigation, inline thumbnail preview,
   finer-grained HTTP error reporting.
-- **0.3** — bulk derivative export, `org-capture` template, citation
-  export (BibTeX / CSL-JSON), annotation fetch, OCR/ALTO sidecars.
+- **0.3** — bulk derivative export ✅, `org-capture` template,
+  citation export (BibTeX / CSL-JSON), annotation fetch,
+  OCR/ALTO sidecars.
 - **0.4** — source registry (Gallica, LoC, Wellcome, DPLA…), hooks
   and per-server profiles.
 
