@@ -159,6 +159,7 @@ All commands are autoloaded.
 | `xiiif-show-raw-json`       | Open the raw JSON for the current context.                       |
 | `xiiif-refresh`             | Re-fetch the current resource and redisplay.                     |
 | `xiiif-open-recent`         | Pick from recently opened resource URLs.                         |
+| `xiiif-retry-last`          | Re-issue the most recent failed fetch.                           |
 | `xiiif-cache-clear`         | Drop in-memory state (does not touch the history file).          |
 
 ## Buffers and keymaps
@@ -399,6 +400,24 @@ which is convenient when scripting. The asynchronous variant
 `xiiif-api-fetch-json-async` calls an errback with the same
 `(SYMBOL URL &rest DATA)` shape; interactive commands report failures
 via `message`.
+
+`xiiif-api-error-hint` turns that tuple into a human-readable string
+with tailored wording for the common HTTP statuses:
+
+| Status    | Wording                                            |
+| --------- | -------------------------------------------------- |
+| `401`     | `requires authentication`                          |
+| `403`     | `access denied`                                    |
+| `404`     | `not found`                                        |
+| `410`     | `resource gone`                                    |
+| `429`     | `rate limited (try later)`                         |
+| `5xx`     | `upstream error <code>`                            |
+| other     | `HTTP <code>`                                      |
+
+Every failure the default errback handles is stored in
+`xiiif-api-last-error`, so `M-x xiiif-retry-last` re-issues the
+offending request after you fix, say, a missing auth header or a
+transient upstream blip.
 
 Manifests with missing canvases, canvases with no image service,
 empty metadata, monolingual or multilingual labels, and v2-vs-v3 mix

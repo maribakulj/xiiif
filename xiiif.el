@@ -32,8 +32,10 @@
 ;; Auxiliary commands:
 ;;
 ;;   M-x xiiif-show-raw-json      inspect the underlying JSON
+;;   M-x xiiif-show-info-json     inspect the Image API info.json
 ;;   M-x xiiif-refresh            re-fetch the current manifest
 ;;   M-x xiiif-open-recent        pick from recently opened manifests
+;;   M-x xiiif-retry-last         re-issue the last failed fetch
 
 ;;; Code:
 
@@ -108,16 +110,7 @@ callback is invoked.  Errors are reported via `message'."
                  url (or (nth 2 err) "parse error")))
        (error
         (message "xiiif: failed to render %s: %s"
-                 url (error-message-string err)))))
-   (lambda (err)
-     (pcase-let* ((`(,sym ,u . ,rest) err))
-       (pcase sym
-         ('xiiif-http-error
-          (message "xiiif: HTTP %s for %s" (car rest) u))
-         (_
-          (message "xiiif: %s for %s%s"
-                   sym u
-                   (if rest (format ": %s" (car rest)) ""))))))))
+                 url (error-message-string err)))))))
 
 
 ;;; ---------- user-facing commands ----------
@@ -345,6 +338,20 @@ detail buffer (re-resolved by id) and the collection browser."
     (user-error "No recent IIIF resources"))
   (let ((url (completing-read "Recent IIIF resource: "
                               xiiif-recent-manifests nil t)))
+    (xiiif-open-manifest url)))
+
+;;;###autoload
+(defun xiiif-retry-last ()
+  "Re-issue the most recent failed xiiif fetch.
+Uses the URL stored in `xiiif-api-last-error'.  The error slot is
+cleared before the retry, so a second failure is reported fresh."
+  (interactive)
+  (unless xiiif-api-last-error
+    (user-error "No recent xiiif error to retry"))
+  (let ((url (nth 1 xiiif-api-last-error)))
+    (unless url
+      (user-error "Last error has no URL to retry"))
+    (setq xiiif-api-last-error nil)
     (xiiif-open-manifest url)))
 
 ;; Load the persisted history (if any) eagerly so

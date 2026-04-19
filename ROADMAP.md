@@ -19,9 +19,9 @@ deliberately speculative.
 - [x] **info.json integration.** On demand, fetch the Image API
   `info.json` and display the advertised sizes, tiles and profile
   compliance level. *(shipped)*
-- [ ] **Better error surfaces.** Distinguish 401/403/404 from
+- [x] **Better error surfaces.** Distinguish 401/403/404 from
   transport errors with tailored messages, and remember the offending
-  URL for a one-key retry.
+  URL for a one-key retry. *(shipped)*
 
 ## 0.3 — DH / GLAM conveniences
 

@@ -116,14 +116,44 @@ For a non-blocking version, see `xiiif-api-fetch-json-async'."
             (xiiif-api--response-json url)))
       (when (buffer-live-p buffer) (kill-buffer buffer)))))
 
+(defvar xiiif-api-last-error nil
+  "The most recent asynchronous fetch error as a list (SYMBOL URL &rest DATA).
+Used by `xiiif-retry-last' to re-attempt the offending request.")
+
+(defun xiiif-api-error-hint (err)
+  "Return a human-readable message for ERR.
+ERR is the list (ERROR-SYMBOL URL &rest DATA) produced by the
+`xiiif-api' errback protocol."
+  (pcase-let* ((`(,sym ,url . ,rest) err)
+               (detail (car rest)))
+    (pcase sym
+      ('xiiif-http-error
+       (pcase detail
+         (401 (format "xiiif: %s requires authentication (HTTP 401)" url))
+         (403 (format "xiiif: access denied to %s (HTTP 403)" url))
+         (404 (format "xiiif: not found: %s (HTTP 404)" url))
+         (410 (format "xiiif: resource gone: %s (HTTP 410)" url))
+         (429 (format "xiiif: rate limited: %s (HTTP 429, try later)" url))
+         ((and (pred numberp) code (guard (>= code 500)))
+          (format "xiiif: upstream error %s at %s" code url))
+         (code (format "xiiif: HTTP %s for %s" code url))))
+      ('xiiif-parse-error
+       (format "xiiif: could not parse %s (%s)"
+               (or url "?") (or detail "invalid JSON")))
+      ('xiiif-network-error
+       (format "xiiif: network error for %s%s"
+               (or url "?")
+               (if detail (format ": %s" detail) "")))
+      (_ (format "xiiif: %s for %s%s"
+                 (or sym 'xiiif-error)
+                 (or url "?")
+                 (if detail (format ": %s" detail) ""))))))
+
 (defun xiiif-api--default-errback (err)
-  "Default async error reporter: show a compact `message'.
-ERR is the list (ERROR-SYMBOL URL &rest DATA)."
-  (pcase-let* ((`(,sym ,url . ,rest) err))
-    (message "xiiif: %s for %s%s"
-             (or sym 'xiiif-error)
-             (or url "?")
-             (if rest (format ": %s" (car rest)) ""))))
+  "Default async error reporter: record ERR and show a tailored message.
+Subsequent calls to `xiiif-retry-last' will re-issue the offending URL."
+  (setq xiiif-api-last-error err)
+  (message "%s" (xiiif-api-error-hint err)))
 
 (defun xiiif-api-fetch-json-async (url callback &optional errback)
   "Fetch URL asynchronously.
