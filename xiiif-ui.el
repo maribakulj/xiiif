@@ -28,13 +28,15 @@
 (require 'xiiif-core)
 (require 'xiiif-cache)
 (require 'xiiif-image)
+(require 'xiiif-annotations)
 
-(defconst xiiif-ui--manifest-buffer   "*XIIIF Manifest*")
-(defconst xiiif-ui--canvases-buffer   "*XIIIF Canvases*")
-(defconst xiiif-ui--canvas-buffer     "*XIIIF Canvas*")
-(defconst xiiif-ui--collection-buffer "*XIIIF Collection*")
-(defconst xiiif-ui--info-buffer       "*XIIIF Image Info*")
-(defconst xiiif-ui--json-buffer       "*XIIIF JSON*")
+(defconst xiiif-ui--manifest-buffer     "*XIIIF Manifest*")
+(defconst xiiif-ui--canvases-buffer     "*XIIIF Canvases*")
+(defconst xiiif-ui--canvas-buffer       "*XIIIF Canvas*")
+(defconst xiiif-ui--collection-buffer   "*XIIIF Collection*")
+(defconst xiiif-ui--info-buffer         "*XIIIF Image Info*")
+(defconst xiiif-ui--annotations-buffer  "*XIIIF Annotations*")
+(defconst xiiif-ui--json-buffer         "*XIIIF JSON*")
 
 (defface xiiif-heading
   '((t :inherit font-lock-function-name-face :weight bold))
@@ -237,6 +239,7 @@
     (define-key map (kbd "d")   #'xiiif-download-image)
     (define-key map (kbd "i")   #'xiiif-insert-org-link)
     (define-key map (kbd "I")   #'xiiif-show-info-json)
+    (define-key map (kbd "a")   #'xiiif-show-annotations)
     (define-key map (kbd "J")   #'xiiif-show-raw-json)
     (define-key map (kbd "g")   #'xiiif-refresh)
     (define-key map (kbd "q")   #'quit-window)
@@ -497,6 +500,64 @@ Prompts for size and destination; other parameters take defaults."
   (xiiif-ui-show-json (xiiif-image-info-raw xiiif-ui--info)
                       (or (xiiif-image-info-id xiiif-ui--info)
                           "info.json")))
+
+
+;;; ---------- annotations ----------
+
+(defvar xiiif-annotations-mode-map
+  (let ((map (make-sparse-keymap)))
+    (define-key map (kbd "g") #'xiiif-refresh)
+    (define-key map (kbd "J") #'xiiif-show-raw-json)
+    (define-key map (kbd "q") #'quit-window)
+    map)
+  "Keymap for `xiiif-annotations-mode'.")
+
+(define-derived-mode xiiif-annotations-mode special-mode "XIIIF-Annotations"
+  "Major mode for the IIIF annotations buffer."
+  (buffer-disable-undo)
+  (setq-local truncate-lines nil))
+
+(defvar-local xiiif-ui--annotations-canvas nil
+  "The `xiiif-canvas' whose annotations the current buffer shows.")
+
+(defvar-local xiiif-ui--annotations nil
+  "List of `xiiif-annotation' rendered in the current buffer.")
+
+(defun xiiif-ui--insert-annotation (a)
+  "Insert one `xiiif-annotation' A into the current buffer."
+  (xiiif-ui--insert-field "Motivation" (xiiif-annotation-motivation a))
+  (xiiif-ui--insert-field "Target"     (xiiif-annotation-target a))
+  (xiiif-ui--insert-field "Type"       (xiiif-annotation-body-type a))
+  (xiiif-ui--insert-field "Language"   (xiiif-annotation-body-lang a))
+  (when-let ((val (xiiif-annotation-body-value a)))
+    (insert "\n")
+    (insert val)
+    (unless (string-suffix-p "\n" val) (insert "\n")))
+  (insert (make-string 40 ?-) "\n"))
+
+(defun xiiif-ui-render-annotations (canvas annotations)
+  "Render ANNOTATIONS (list of `xiiif-annotation') for CANVAS.
+ANNOTATIONS may be empty; the buffer still opens with a diagnostic."
+  (let ((buf (get-buffer-create xiiif-ui--annotations-buffer)))
+    (with-current-buffer buf
+      (xiiif-annotations-mode)
+      (setq-local xiiif-ui--annotations-canvas canvas)
+      (setq-local xiiif-ui--annotations annotations)
+      (let ((inhibit-read-only t))
+        (erase-buffer)
+        (xiiif-ui--insert-hints
+         '(("J" . "raw JSON") ("g" . "refresh") ("q" . "quit")))
+        (xiiif-ui--insert-heading
+         (format "%s  -  Annotations (%d)"
+                 (xiiif-canvas-title canvas)
+                 (length annotations)))
+        (if (null annotations)
+            (insert "No annotations attached to this canvas.\n")
+          (dolist (a annotations)
+            (insert "\n")
+            (xiiif-ui--insert-annotation a)))
+        (goto-char (point-min))))
+    (pop-to-buffer-same-window buf)))
 
 
 ;;; ---------- raw JSON ----------

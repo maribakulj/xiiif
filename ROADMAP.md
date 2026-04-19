@@ -33,8 +33,10 @@ deliberately speculative.
   research journal.
 - **Citation export.** Generate BibTeX / CSL-JSON entries from
   manifest metadata (title, date, rights, provider).
-- **Annotation fetch.** Follow `AnnotationCollection` links from a
-  canvas and show annotations in a read-only buffer.
+- [x] **Annotation fetch.** Follow `AnnotationPage` links from a
+  canvas (inline or external) and show annotations in a read-only
+  buffer; `AnnotationCollection` pagination is a later task.
+  *(shipped)*
 - **transcript/ALTO sidecars.** When a canvas links OCR or ALTO, offer
   to view the text in a side window.
 

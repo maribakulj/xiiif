@@ -149,6 +149,7 @@ All commands are autoloaded.
 | `xiiif-copy-image-url`      | Copy a derivative URL. `C-u` prompts for all parameters.         |
 | `xiiif-download-image`      | Download a derivative for the current/contextual canvas.         |
 | `xiiif-show-info-json`      | Fetch and display the Image API `info.json` for a canvas.        |
+| `xiiif-show-annotations`    | Fetch and display non-painting annotations for a canvas.         |
 | `xiiif-insert-org-link`     | Insert a manifest, canvas, image link, or metadata block.        |
 
 ### Auxiliary
@@ -174,6 +175,7 @@ share a vocabulary of keys.
 | `*XIIIF Canvas*`       | `xiiif-canvas-mode`        | `special-mode`         |
 | `*XIIIF Collection*`   | `xiiif-collection-mode`    | `tabulated-list-mode`  |
 | `*XIIIF Image Info*`   | `xiiif-info-mode`          | `special-mode`         |
+| `*XIIIF Annotations*`  | `xiiif-annotations-mode`   | `special-mode`         |
 
 Common bindings:
 
@@ -185,6 +187,7 @@ Common bindings:
 | `d`   | Download the contextual image (canvas browser, canvas detail)  |
 | `i`   | Insert an Org link (or copy to kill-ring in read-only buffers) |
 | `I`   | Fetch and display the image service `info.json` (canvas detail)|
+| `a`   | Fetch and display annotations for the canvas (canvas detail)   |
 | `J`   | Show raw JSON                                                  |
 | `g`   | Refresh                                                        |
 | `q`   | `quit-window`                                                  |
@@ -244,6 +247,16 @@ In Lisp:
 ```
 
 `xiiif-image-info-url` returns the `info.json` endpoint of a service.
+
+### Canvas annotations
+
+Non-painting annotations — commentary, tagging, transcriptions —
+attached to a canvas's `annotations` array can be opened with `a`
+(`xiiif-show-annotations`) from the canvas detail buffer. Inline
+`AnnotationPage` entries render immediately; external page URLs are
+fetched asynchronously and merged into the same view. Each
+annotation surfaces its motivation, target, body type, language
+and body value. `AnnotationCollection` pagination is a later task.
 
 ### Inspecting `info.json`
 
@@ -336,6 +349,7 @@ xiiif/
   xiiif-image.el    ; IIIF Image API URL builder, download
   xiiif-ui.el       ; major modes & buffers
   xiiif-org.el      ; Org link / metadata insertion
+  xiiif-annotations.el ; non-painting annotation fetch + parse
   tests/            ; ERT tests
   examples/         ; sample manifest + collection fixtures
 ```
@@ -349,6 +363,7 @@ xiiif/
 | `xiiif-image`   | `xiiif-image-url`, `xiiif-image-info-url`, `xiiif-image-download`, `xiiif-image-fetch-info`, `xiiif-image-fetch-info-async`, and the `xiiif-image-info` parser. |
 | `xiiif-ui`      | Five derived modes; renders all xiiif buffers. |
 | `xiiif-org`     | `xiiif-org-insert-*` and the underlying link / metadata-block helpers. |
+| `xiiif-annotations` | `xiiif-annotation` struct, `xiiif-parse-annotation`, `xiiif-parse-annotation-page`, `xiiif-canvas-annotation-refs`. |
 
 ## Customization
 
@@ -432,6 +447,7 @@ emacs -batch -L . -L tests \
       -l tests/xiiif-api-test.el \
       -l tests/xiiif-core-test.el \
       -l tests/xiiif-image-test.el \
+      -l tests/xiiif-annotations-test.el \
       -f ert-run-tests-batch-and-exit
 ```
 
@@ -459,8 +475,9 @@ long-term plan. Highlights of the next sprints:
 - **0.2** — async fetch ✅, Collections ✅, `info.json` integration ✅,
   structures/ranges navigation, inline thumbnail preview,
   finer-grained HTTP error reporting.
-- **0.3** — bulk derivative export, `org-capture` template, citation
-  export (BibTeX / CSL-JSON), annotation fetch, OCR/ALTO sidecars.
+- **0.3** — annotation fetch ✅, bulk derivative export,
+  `org-capture` template, citation export (BibTeX / CSL-JSON),
+  OCR/ALTO sidecars.
 - **0.4** — source registry (Gallica, LoC, Wellcome, DPLA…), hooks
   and per-server profiles.
 

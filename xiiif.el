@@ -33,6 +33,7 @@
 ;;
 ;;   M-x xiiif-show-raw-json      inspect the underlying JSON
 ;;   M-x xiiif-show-info-json     inspect the Image API info.json
+;;   M-x xiiif-show-annotations   inspect canvas annotations
 ;;   M-x xiiif-refresh            re-fetch the current manifest
 ;;   M-x xiiif-open-recent        pick from recently opened manifests
 ;;   M-x xiiif-retry-last         re-issue the last failed fetch
@@ -46,6 +47,7 @@
 (require 'xiiif-core)
 (require 'xiiif-cache)
 (require 'xiiif-image)
+(require 'xiiif-annotations)
 (require 'xiiif-ui)
 (require 'xiiif-org)
 
@@ -207,6 +209,42 @@ or nil to use the contextual canvas."
        (xiiif-ui-render-info info)
        (message "xiiif: loaded info.json for %s"
                 (or (xiiif-image-info-id info) "image service"))))))
+
+;;;###autoload
+(defun xiiif-show-annotations ()
+  "Fetch and display the non-painting annotations of the contextual canvas.
+
+Handles both inline AnnotationPages embedded in the canvas's
+`annotations' array and external references to AnnotationPage URLs,
+which are fetched asynchronously and merged into a single view."
+  (interactive)
+  (let* ((canvas (xiiif--require-canvas))
+         (refs   (xiiif-canvas-annotation-refs canvas))
+         (inline (cl-loop for ref in refs
+                          for page = (plist-get ref :inline)
+                          when page append (xiiif-parse-annotation-page page)))
+         (urls   (cl-loop for ref in refs
+                          for url = (plist-get ref :url)
+                          when url collect url)))
+    (cond
+     ((and (null inline) (null urls))
+      (user-error "Canvas has no annotations"))
+     ((null urls)
+      (xiiif-ui-render-annotations canvas inline))
+     (t
+      (message "xiiif: fetching %d annotation page%s..."
+               (length urls) (if (= 1 (length urls)) "" "s"))
+      (let ((pending   (length urls))
+            (collected (copy-sequence inline)))
+        (dolist (url urls)
+          (xiiif-api-fetch-json-async
+           url
+           (lambda (json)
+             (setq collected
+                   (nconc collected (xiiif-parse-annotation-page json)))
+             (cl-decf pending)
+             (when (zerop pending)
+               (xiiif-ui-render-annotations canvas collected))))))))))
 
 ;;;###autoload
 (defun xiiif-copy-manifest-url ()
