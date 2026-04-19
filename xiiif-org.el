@@ -104,5 +104,46 @@ the current buffer is read-only (e.g. inside a xiiif overview)."
   (xiiif-org--require)
   (xiiif-org--emit (concat (xiiif-org-metadata-block manifest canvas) "\n")))
 
+
+;;; ---------- org-capture integration ----------
+
+;; These helpers are meant to be referenced from an `org-capture-templates'
+;; entry; see README for a worked example.  They read from the package's
+;; session state (`xiiif-current-manifest', `xiiif-current-canvas') so the
+;; template resolves the right resource at capture time.
+
+;;;###autoload
+(defun xiiif-org-capture-headline (&optional manifest)
+  "Return a headline string derived from MANIFEST (or the current one).
+Signals a user-error when no manifest is loaded, so an org-capture
+template never silently succeeds on empty state."
+  (let ((m (or manifest xiiif-current-manifest)))
+    (unless m
+      (user-error "xiiif: no manifest loaded for org-capture"))
+    (xiiif-manifest-title m)))
+
+;;;###autoload
+(defun xiiif-org-capture-body (&optional manifest canvas)
+  "Return an Org capture body for MANIFEST and optional CANVAS.
+
+The body contains:
+- a manifest link on its own line,
+- a canvas link when CANVAS (or `xiiif-current-canvas') is set,
+- a `#+begin_xiiif' metadata block with a `:notes:' line.
+
+Intended for use as `%(xiiif-org-capture-body)' inside an
+`org-capture-templates' entry."
+  (xiiif-org--require)
+  (let* ((m (or manifest xiiif-current-manifest))
+         (c (or canvas   xiiif-current-canvas)))
+    (unless m
+      (user-error "xiiif: no manifest loaded for org-capture"))
+    (let ((lines (list (xiiif-org-manifest-link m))))
+      (when c
+        (push (xiiif-org-canvas-link m c) lines))
+      (push "" lines)
+      (push (xiiif-org-metadata-block m c) lines)
+      (mapconcat #'identity (nreverse lines) "\n"))))
+
 (provide 'xiiif-org)
 ;;; xiiif-org.el ends here

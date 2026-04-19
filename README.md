@@ -303,6 +303,32 @@ Example metadata block:
 These are plain Org links and plain block elements — they do not
 require any Org extensions to work.
 
+### `org-capture` template
+
+Two helpers make it trivial to produce a ready-to-file research note
+from the manifest currently loaded in xiiif:
+
+- `xiiif-org-capture-headline` — the manifest title, suitable for a
+  headline.
+- `xiiif-org-capture-body` — a block with a manifest link, an
+  optional canvas link (if `xiiif-current-canvas` is set) and a
+  `#+begin_xiiif` metadata block including a `:notes:` line.
+
+Wire them into `org-capture-templates`:
+
+```elisp
+(with-eval-after-load 'org-capture
+  (add-to-list 'org-capture-templates
+               '("x" "IIIF manifest note" entry
+                 (file+headline "~/org/research.org" "IIIF")
+                 "* %(xiiif-org-capture-headline)\n%(xiiif-org-capture-body)\n%?"
+                 :empty-lines 1)))
+```
+
+Both helpers signal `user-error` when no manifest is loaded, so the
+capture template fails loudly instead of silently writing an empty
+note.
+
 ## Internal data model
 
 Internally, `xiiif` parses every resource into `cl-defstruct` types:
@@ -432,6 +458,7 @@ emacs -batch -L . -L tests \
       -l tests/xiiif-api-test.el \
       -l tests/xiiif-core-test.el \
       -l tests/xiiif-image-test.el \
+      -l tests/xiiif-org-test.el \
       -f ert-run-tests-batch-and-exit
 ```
 
@@ -459,8 +486,9 @@ long-term plan. Highlights of the next sprints:
 - **0.2** — async fetch ✅, Collections ✅, `info.json` integration ✅,
   structures/ranges navigation, inline thumbnail preview,
   finer-grained HTTP error reporting.
-- **0.3** — bulk derivative export, `org-capture` template, citation
-  export (BibTeX / CSL-JSON), annotation fetch, OCR/ALTO sidecars.
+- **0.3** — `org-capture` template ✅, bulk derivative export,
+  citation export (BibTeX / CSL-JSON), annotation fetch,
+  OCR/ALTO sidecars.
 - **0.4** — source registry (Gallica, LoC, Wellcome, DPLA…), hooks
   and per-server profiles.
 

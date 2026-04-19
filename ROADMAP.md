@@ -28,9 +28,10 @@ deliberately speculative.
 - **Bulk derivative export.** Mark canvases in the browser and dump
   all selected derivatives to a directory with a uniform naming
   scheme.
-- **Org-capture template.** Ship an `org-capture` template that
-  produces a standard note from a manifest, ready to drop in a
-  research journal.
+- [x] **Org-capture template.** Ship helpers (`xiiif-org-capture-headline`,
+  `xiiif-org-capture-body`) that an `org-capture-templates' entry can
+  splice via `%(...)' to produce a ready-to-file research note.
+  *(shipped)*
 - **Citation export.** Generate BibTeX / CSL-JSON entries from
   manifest metadata (title, date, rights, provider).
 - **Annotation fetch.** Follow `AnnotationCollection` links from a
