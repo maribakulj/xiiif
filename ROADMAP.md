@@ -31,8 +31,8 @@ deliberately speculative.
 - **Org-capture template.** Ship an `org-capture` template that
   produces a standard note from a manifest, ready to drop in a
   research journal.
-- **Citation export.** Generate BibTeX / CSL-JSON entries from
-  manifest metadata (title, date, rights, provider).
+- [x] **Citation export.** Generate BibTeX / CSL-JSON entries from
+  manifest metadata (title, date, rights, provider). *(shipped)*
 - **Annotation fetch.** Follow `AnnotationCollection` links from a
   canvas and show annotations in a read-only buffer.
 - **transcript/ALTO sidecars.** When a canvas links OCR or ALTO, offer

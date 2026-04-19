@@ -37,6 +37,7 @@ upstream servers.
 - [Quick start](#quick-start)
 - [Commands](#commands)
 - [Buffers and keymaps](#buffers-and-keymaps)
+- [Citation export](#citation-export)
 - [Collections](#collections)
 - [IIIF Image API URLs](#iiif-image-api-urls)
 - [Org integration](#org-integration)
@@ -150,6 +151,7 @@ All commands are autoloaded.
 | `xiiif-download-image`      | Download a derivative for the current/contextual canvas.         |
 | `xiiif-show-info-json`      | Fetch and display the Image API `info.json` for a canvas.        |
 | `xiiif-insert-org-link`     | Insert a manifest, canvas, image link, or metadata block.        |
+| `xiiif-export-citation`     | Export the manifest as BibTeX or CSL-JSON (insert or kill-ring). |
 
 ### Auxiliary
 
@@ -194,6 +196,35 @@ Common bindings:
 buffer is writable (like an Org buffer you've switched to), the link
 is inserted at point; when called from a read-only xiiif buffer, the
 link is placed on the kill-ring with a notification, ready to yank.
+
+## Citation export
+
+`xiiif-export-citation` turns the current manifest into either a
+BibTeX `@misc` entry or a CSL-JSON record, ready to drop into a
+reference manager or a LaTeX bibliography.  It reads the manifest
+label and looks for the usual labels in `metadata` (Author /
+Creator, Date / Created / Issued, Publisher / Provider, Rights /
+License) with case-insensitive matching, so it adapts to how each
+institution names things.
+
+Example BibTeX output for the bundled sample:
+
+```bibtex
+@misc{doe2024,
+  title = {A Sample Illuminated Book},
+  author = {Jane Doe},
+  year = {2024},
+  url = {https://example.org/iiif/book1/manifest},
+  note = {IIIF Manifest},
+}
+```
+
+The same information is also available as CSL-JSON (type
+`manuscript`) via `(xiiif-citation-csl-json manifest)`.
+
+The command inserts at point in writable buffers and copies to the
+kill-ring from a read-only xiiif buffer, so binding it from inside
+the manifest overview is safe.
 
 ## Collections
 
@@ -336,6 +367,7 @@ xiiif/
   xiiif-image.el    ; IIIF Image API URL builder, download
   xiiif-ui.el       ; major modes & buffers
   xiiif-org.el      ; Org link / metadata insertion
+  xiiif-cite.el     ; BibTeX / CSL-JSON export
   tests/            ; ERT tests
   examples/         ; sample manifest + collection fixtures
 ```
@@ -349,6 +381,7 @@ xiiif/
 | `xiiif-image`   | `xiiif-image-url`, `xiiif-image-info-url`, `xiiif-image-download`, `xiiif-image-fetch-info`, `xiiif-image-fetch-info-async`, and the `xiiif-image-info` parser. |
 | `xiiif-ui`      | Five derived modes; renders all xiiif buffers. |
 | `xiiif-org`     | `xiiif-org-insert-*` and the underlying link / metadata-block helpers. |
+| `xiiif-cite`    | `xiiif-citation-metadata`, `xiiif-citation-bibtex`, `xiiif-citation-csl-json`. |
 
 ## Customization
 
@@ -432,6 +465,7 @@ emacs -batch -L . -L tests \
       -l tests/xiiif-api-test.el \
       -l tests/xiiif-core-test.el \
       -l tests/xiiif-image-test.el \
+      -l tests/xiiif-cite-test.el \
       -f ert-run-tests-batch-and-exit
 ```
 
@@ -459,8 +493,8 @@ long-term plan. Highlights of the next sprints:
 - **0.2** — async fetch ✅, Collections ✅, `info.json` integration ✅,
   structures/ranges navigation, inline thumbnail preview,
   finer-grained HTTP error reporting.
-- **0.3** — bulk derivative export, `org-capture` template, citation
-  export (BibTeX / CSL-JSON), annotation fetch, OCR/ALTO sidecars.
+- **0.3** — citation export (BibTeX / CSL-JSON) ✅, bulk derivative
+  export, `org-capture` template, annotation fetch, OCR/ALTO sidecars.
 - **0.4** — source registry (Gallica, LoC, Wellcome, DPLA…), hooks
   and per-server profiles.
 

@@ -36,6 +36,7 @@
 ;;   M-x xiiif-refresh            re-fetch the current manifest
 ;;   M-x xiiif-open-recent        pick from recently opened manifests
 ;;   M-x xiiif-retry-last         re-issue the last failed fetch
+;;   M-x xiiif-export-citation    export a BibTeX or CSL-JSON citation
 
 ;;; Code:
 
@@ -48,6 +49,7 @@
 (require 'xiiif-image)
 (require 'xiiif-ui)
 (require 'xiiif-org)
+(require 'xiiif-cite)
 
 (defgroup xiiif nil
   "Emacs-native IIIF workbench."
@@ -353,6 +355,30 @@ cleared before the retry, so a second failure is reported fresh."
       (user-error "Last error has no URL to retry"))
     (setq xiiif-api-last-error nil)
     (xiiif-open-manifest url)))
+
+;;;###autoload
+(defun xiiif-export-citation (&optional format)
+  "Export the current manifest as a citation in FORMAT.
+
+FORMAT is `bibtex' or `csl-json'; interactively the user is prompted.
+When the current buffer is writable the citation is inserted at point;
+otherwise it is copied to the kill ring and a notification is shown."
+  (interactive
+   (list (intern (completing-read
+                  "Citation format: "
+                  '("bibtex" "csl-json") nil t nil nil "bibtex"))))
+  (let* ((manifest (xiiif--require-manifest))
+         (text (pcase format
+                 ('bibtex   (xiiif-citation-bibtex manifest))
+                 ('csl-json (xiiif-citation-csl-json manifest))
+                 (_ (user-error "Unknown citation format: %s" format)))))
+    (if buffer-read-only
+        (progn
+          (kill-new text)
+          (message "xiiif: %s citation copied to kill ring" format))
+      (insert text)
+      (unless (string-suffix-p "\n" text) (insert "\n"))
+      (message "xiiif: %s citation inserted" format))))
 
 ;; Load the persisted history (if any) eagerly so
 ;; `xiiif-open-manifest' can default to the last URL.
