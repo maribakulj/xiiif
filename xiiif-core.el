@@ -245,6 +245,33 @@ Signals `xiiif-parse-error' if JSON does not look like a manifest."
         (format "%d. %s" index lbl)
       lbl)))
 
+(defun xiiif--thumbnail-field-url (thumbnail)
+  "Return a URL string from a IIIF `thumbnail' field THUMBNAIL or nil.
+Accepts v2 (string or single object with id/@id) and v3 (array of
+Image objects) shapes."
+  (cond
+   ((null thumbnail) nil)
+   ((stringp thumbnail) thumbnail)
+   ((vectorp thumbnail)
+    (and (> (length thumbnail) 0)
+         (xiiif--thumbnail-field-url (aref thumbnail 0))))
+   ((consp thumbnail) (xiiif--get thumbnail 'id))))
+
+(defun xiiif-canvas-thumbnail-url (canvas &optional size)
+  "Return a URL string for a small preview of CANVAS, or nil.
+
+Preference order:
+1. an explicit `thumbnail' value declared by the canvas,
+2. a synthesized IIIF Image API derivative of the canvas image
+   service at SIZE (defaults to \"!200,200\")."
+  (or (xiiif--thumbnail-field-url (xiiif-canvas-thumbnail canvas))
+      (let* ((service (xiiif-canvas-image-service canvas))
+             (base (and service (xiiif-image-service-id service))))
+        (when base
+          (format "%s/full/%s/0/default.jpg"
+                  (string-trim-right base "/")
+                  (or size "!200,200"))))))
+
 
 
 ;;; ---------- collections ----------

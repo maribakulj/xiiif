@@ -162,6 +162,7 @@ All commands are autoloaded.
 | `xiiif-refresh`             | Re-fetch the current resource and redisplay.                     |
 | `xiiif-open-recent`         | Pick from recently opened resource URLs.                         |
 | `xiiif-retry-last`          | Re-issue the most recent failed fetch.                           |
+| `xiiif-toggle-thumbnails`   | Enable or disable inline canvas-thumbnail previews.              |
 | `xiiif-cache-clear`         | Drop in-memory state (does not touch the history file).          |
 
 ## Buffers and keymaps
@@ -272,6 +273,19 @@ In Lisp:
 ```
 
 `xiiif-image-info-url` returns the `info.json` endpoint of a service.
+
+### Inline thumbnails
+
+On a graphic Emacs display, the canvas detail buffer fetches a small
+IIIF Image API derivative of the canvas and inserts it inline as its
+last section. The canvas's declared `thumbnail` field is used when
+present; otherwise a URL is synthesized from the image service at
+`xiiif-ui-thumbnail-size` (default `!200,200`).
+
+The preview is fetched asynchronously after the text has rendered, so
+the buffer is usable immediately; failures are silent. Toggle the
+feature with `M-x xiiif-toggle-thumbnails` or set
+`xiiif-ui-show-thumbnails` to `nil` in init.
 
 ### Inspecting `info.json`
 
@@ -407,6 +421,13 @@ All options live under the `xiiif` group (`M-x customize-group RET xiiif`).
 | `xiiif-image-default-quality`   | `"default"` |
 | `xiiif-image-default-format`    | `"jpg"`     |
 | `xiiif-image-download-directory`| `~/.emacs.d/xiiif/` |
+
+### Thumbnails
+
+| Option                          | Default      |
+| ------------------------------- | ------------ |
+| `xiiif-ui-show-thumbnails`      | `t`          |
+| `xiiif-ui-thumbnail-size`       | `"!200,200"` |
 
 ### Recents
 
