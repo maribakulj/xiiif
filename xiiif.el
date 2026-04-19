@@ -27,16 +27,18 @@
 ;;   M-x xiiif-open-canvas        open the canvas at point
 ;;   M-x xiiif-copy-image-url     copy a derivative URL
 ;;   M-x xiiif-download-image     download a derivative image
+;;   M-x xiiif-download-marked    bulk-download marked canvases
 ;;   M-x xiiif-insert-org-link    insert a link into Org
 ;;
 ;; Auxiliary commands:
 ;;
 ;;   M-x xiiif-show-raw-json      inspect the underlying JSON
 ;;   M-x xiiif-show-info-json     inspect the Image API info.json
-;;   M-x xiiif-show-ocr           open an OCR sidecar for a canvas
+;;   M-x xiiif-show-annotations   inspect canvas annotations
 ;;   M-x xiiif-refresh            re-fetch the current manifest
 ;;   M-x xiiif-open-recent        pick from recently opened manifests
 ;;   M-x xiiif-retry-last         re-issue the last failed fetch
+;;   M-x xiiif-export-citation    export a BibTeX or CSL-JSON citation
 
 ;;; Code:
 
@@ -47,9 +49,10 @@
 (require 'xiiif-core)
 (require 'xiiif-cache)
 (require 'xiiif-image)
-(require 'xiiif-ocr)
+(require 'xiiif-annotations)
 (require 'xiiif-ui)
 (require 'xiiif-org)
+(require 'xiiif-cite)
 
 (defgroup xiiif nil
   "Emacs-native IIIF workbench."
@@ -196,6 +199,66 @@ quality and format instead of using defaults."
   (xiiif-ui-download-canvas-image (xiiif--require-canvas)))
 
 ;;;###autoload
+(defun xiiif-download-marked (directory &optional size format)
+  "Download every marked canvas in the canvas browser to DIRECTORY.
+
+SIZE and FORMAT override the defaults from `xiiif-image-default-size'
+and `xiiif-image-default-format'.  Files are named
+\"<INDEX>-<SLUG>.<FORMAT>\" where SLUG is derived from the canvas
+label.  Canvases without an image service are skipped silently."
+  (interactive
+   (progn
+     (unless (derived-mode-p 'xiiif-canvas-list-mode)
+       (user-error "Run this from the canvas browser"))
+     (list (read-directory-name "Download marked to: "
+                                xiiif-image-download-directory)
+           (read-string (format "Size (default %s): "
+                                xiiif-image-default-size)
+                        nil nil xiiif-image-default-size)
+           (read-string (format "Format (default %s): "
+                                xiiif-image-default-format)
+                        nil nil xiiif-image-default-format))))
+  (let ((marked (xiiif-ui--marked-canvases)))
+    (unless marked
+      (user-error "No canvases marked (press m or t on rows first)"))
+    (let ((dir (expand-file-name directory)))
+      (unless (file-directory-p dir) (make-directory dir t))
+      (let ((progress (make-progress-reporter
+                       (format "xiiif: downloading %d canvas%s"
+                               (length marked)
+                               (if (= 1 (length marked)) "" "es"))
+                       0 (length marked)))
+            (saved 0)
+            (skipped 0))
+        (cl-loop
+         for canvas in marked
+         for index from 1
+         do
+         (if (not (xiiif-canvas-image-service canvas))
+             (cl-incf skipped)
+           (let ((dest (expand-file-name
+                        (format "%03d-%s.%s"
+                                index
+                                (xiiif-canvas-filesystem-slug canvas)
+                                format)
+                        dir)))
+             (condition-case err
+                 (progn
+                   (xiiif-image-download canvas dest :size size :format format)
+                   (cl-incf saved))
+               (error
+                (message "xiiif: skipped %s (%s)"
+                         (xiiif-canvas-title canvas)
+                         (error-message-string err))
+                (cl-incf skipped))))
+           (progress-reporter-update progress index)))
+        (progress-reporter-done progress)
+        (message "xiiif: saved %d canvas%s to %s%s"
+                 saved (if (= 1 saved) "" "es") dir
+                 (if (> skipped 0)
+                     (format " (%d skipped)" skipped) ""))))))
+
+;;;###autoload
 (defun xiiif-show-info-json (&optional target)
   "Fetch and display the Image API info.json for TARGET.
 TARGET may be a URL string, a `xiiif-image-service', a `xiiif-canvas',
@@ -211,40 +274,13 @@ or nil to use the contextual canvas."
                 (or (xiiif-image-info-id info) "image service"))))))
 
 ;;;###autoload
-(defun xiiif-show-ocr ()
-  "Fetch and display an OCR sidecar (ALTO / hOCR / plain text).
-
-Inspects the contextual canvas's `seeAlso' array for a reference
-with a recognisable OCR format, prompts when several are available,
-and then renders the payload in `*XIIIF OCR*'.  `R' in the sidecar
-toggles between extracted text and the raw source."
+(defun xiiif-show-structures ()
+  "Open the structural navigator for the current manifest.
+Shows `structures' (v2) and `Range' (v3) hierarchies in a dedicated
+`*XIIIF Structures*' buffer.  RET descends into a range's first
+canvas or opens the canvas at point."
   (interactive)
-  (let* ((canvas (xiiif--require-canvas))
-         (refs   (xiiif-canvas-ocr-refs canvas)))
-    (unless refs
-      (user-error "Canvas has no OCR seeAlso reference"))
-    (let* ((choice
-            (cond
-             ((= 1 (length refs)) (car refs))
-             (t (let* ((labels (mapcar
-                                (lambda (r)
-                                  (format "%s  [%s]  %s"
-                                          (plist-get r :format)
-                                          (plist-get r :url)
-                                          (or (plist-get r :label) "")))
-                                refs))
-                       (pick (completing-read "OCR source: " labels nil t)))
-                  (nth (cl-position pick labels :test #'equal) refs))))
-           (url    (plist-get choice :url))
-           (format (plist-get choice :format)))
-      (message "xiiif: fetching %s..." url)
-      (condition-case err
-          (let ((body (xiiif-ocr-fetch-sync url)))
-            (xiiif-ui-render-ocr url format body)
-            (message "xiiif: loaded %s OCR (%d bytes)"
-                     format (length body)))
-        (xiiif-error
-         (message "%s" (xiiif-api-error-hint err)))))))
+  (xiiif-ui-render-structures (xiiif--require-manifest)))
 
 ;;;###autoload
 (defun xiiif-copy-manifest-url ()
@@ -325,7 +361,8 @@ Signals `user-error' if there is nothing to refresh."
                  (or xiiif-current-collection
                      (user-error "No collection in this buffer to refresh"))))
             mode))
-     ((or (memq mode '(xiiif-manifest-mode xiiif-canvas-list-mode xiiif-canvas-mode))
+     ((or (memq mode '(xiiif-manifest-mode xiiif-canvas-list-mode
+                       xiiif-canvas-mode xiiif-structures-mode))
           xiiif-current-manifest)
       (cons (xiiif-manifest-url
              (or xiiif-current-manifest
@@ -360,6 +397,10 @@ detail buffer (re-resolved by id) and the collection browser."
                (progn (xiiif-cache-set-canvas match)
                       (xiiif-ui-render-canvas match))
              (xiiif-ui-render-manifest fresh))))
+        ((eq mode 'xiiif-structures-mode)
+         (if (xiiif-manifest-structures fresh)
+             (xiiif-ui-render-structures fresh)
+           (xiiif-ui-render-manifest fresh)))
         (t (xiiif-ui-render-manifest fresh)))
        (message "xiiif: refreshed %s" (xiiif-manifest-title fresh)))
      (lambda (fresh)
@@ -379,6 +420,18 @@ detail buffer (re-resolved by id) and the collection browser."
     (xiiif-open-manifest url)))
 
 ;;;###autoload
+(defun xiiif-toggle-thumbnails ()
+  "Toggle inline thumbnail rendering in the canvas detail buffer.
+Re-renders the current canvas, if any, to pick up the new setting."
+  (interactive)
+  (setq xiiif-ui-show-thumbnails (not xiiif-ui-show-thumbnails))
+  (message "xiiif: thumbnails %s"
+           (if xiiif-ui-show-thumbnails "enabled" "disabled"))
+  (when (and xiiif-current-canvas
+             (derived-mode-p 'xiiif-canvas-mode))
+    (xiiif-ui-render-canvas xiiif-current-canvas)))
+
+;;;###autoload
 (defun xiiif-retry-last ()
   "Re-issue the most recent failed xiiif fetch.
 Uses the URL stored in `xiiif-api-last-error'.  The error slot is
@@ -391,6 +444,30 @@ cleared before the retry, so a second failure is reported fresh."
       (user-error "Last error has no URL to retry"))
     (setq xiiif-api-last-error nil)
     (xiiif-open-manifest url)))
+
+;;;###autoload
+(defun xiiif-export-citation (&optional format)
+  "Export the current manifest as a citation in FORMAT.
+
+FORMAT is `bibtex' or `csl-json'; interactively the user is prompted.
+When the current buffer is writable the citation is inserted at point;
+otherwise it is copied to the kill ring and a notification is shown."
+  (interactive
+   (list (intern (completing-read
+                  "Citation format: "
+                  '("bibtex" "csl-json") nil t nil nil "bibtex"))))
+  (let* ((manifest (xiiif--require-manifest))
+         (text (pcase format
+                 ('bibtex   (xiiif-citation-bibtex manifest))
+                 ('csl-json (xiiif-citation-csl-json manifest))
+                 (_ (user-error "Unknown citation format: %s" format)))))
+    (if buffer-read-only
+        (progn
+          (kill-new text)
+          (message "xiiif: %s citation copied to kill ring" format))
+      (insert text)
+      (unless (string-suffix-p "\n" text) (insert "\n"))
+      (message "xiiif: %s citation inserted" format))))
 
 ;; Load the persisted history (if any) eagerly so
 ;; `xiiif-open-manifest' can default to the last URL.
