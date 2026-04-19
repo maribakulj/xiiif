@@ -152,6 +152,7 @@ All commands are autoloaded.
 | `xiiif-show-info-json`      | Fetch and display the Image API `info.json` for a canvas.        |
 | `xiiif-show-structures`     | Open the structural navigator (Ranges) for the current manifest. |
 | `xiiif-insert-org-link`     | Insert a manifest, canvas, image link, or metadata block.        |
+| `xiiif-export-citation`     | Export the manifest as BibTeX or CSL-JSON (insert or kill-ring). |
 
 ### Auxiliary
 
@@ -380,6 +381,7 @@ xiiif/
   xiiif-image.el    ; IIIF Image API URL builder, download
   xiiif-ui.el       ; major modes & buffers
   xiiif-org.el      ; Org link / metadata insertion
+  xiiif-cite.el     ; BibTeX / CSL-JSON export
   tests/            ; ERT tests
   examples/         ; sample manifest + collection fixtures
 ```
@@ -393,6 +395,7 @@ xiiif/
 | `xiiif-image`   | `xiiif-image-url`, `xiiif-image-info-url`, `xiiif-image-download`, `xiiif-image-fetch-info`, `xiiif-image-fetch-info-async`, and the `xiiif-image-info` parser. |
 | `xiiif-ui`      | Six derived modes; renders all xiiif buffers. |
 | `xiiif-org`     | `xiiif-org-insert-*` and the underlying link / metadata-block helpers. |
+| `xiiif-cite`    | `xiiif-citation-metadata`, `xiiif-citation-bibtex`, `xiiif-citation-csl-json`. |
 
 ## Customization
 
@@ -483,6 +486,7 @@ emacs -batch -L . -L tests \
       -l tests/xiiif-api-test.el \
       -l tests/xiiif-core-test.el \
       -l tests/xiiif-image-test.el \
+      -l tests/xiiif-cite-test.el \
       -f ert-run-tests-batch-and-exit
 ```
 
