@@ -41,9 +41,12 @@
   :group 'xiiif)
 
 (defun xiiif-api--valid-url-p (url)
-  "Return non-nil if URL looks like an http(s) URL."
+  "Return non-nil if URL looks like a supported URL.
+Accepts http(s):// and file:// schemes.  file:// URLs are mostly
+useful for reading local IIIF fixtures during development; downloads
+through `url-copy-file' also honour them."
   (and (stringp url)
-       (string-match-p "\\`https?://[^[:space:]]+\\'" url)))
+       (string-match-p "\\`\\(?:https?\\|file\\)://[^[:space:]]+\\'" url)))
 
 (defun xiiif-api--status-code ()
   "Parse the HTTP status code from the current `url' response buffer.

@@ -30,13 +30,13 @@
 (require 'xiiif-image)
 (require 'xiiif-annotations)
 
-(defconst xiiif-ui--manifest-buffer   "*XIIIF Manifest*")
-(defconst xiiif-ui--canvases-buffer   "*XIIIF Canvases*")
-(defconst xiiif-ui--canvas-buffer     "*XIIIF Canvas*")
-(defconst xiiif-ui--collection-buffer "*XIIIF Collection*")
-(defconst xiiif-ui--info-buffer       "*XIIIF Image Info*")
-(defconst xiiif-ui--structures-buffer "*XIIIF Structures*")
-(defconst xiiif-ui--json-buffer       "*XIIIF JSON*")
+(defconst xiiif-ui--manifest-buffer    "*XIIIF Manifest*")
+(defconst xiiif-ui--canvases-buffer    "*XIIIF Canvases*")
+(defconst xiiif-ui--canvas-buffer      "*XIIIF Canvas*")
+(defconst xiiif-ui--collection-buffer  "*XIIIF Collection*")
+(defconst xiiif-ui--info-buffer        "*XIIIF Image Info*")
+(defconst xiiif-ui--structures-buffer  "*XIIIF Structures*")
+(defconst xiiif-ui--annotations-buffer "*XIIIF Annotations*")
 
 (defface xiiif-heading
   '((t :inherit font-lock-function-name-face :weight bold))
@@ -392,7 +392,8 @@ fetches a small preview asynchronously and inserts it at the end."
           (insert "\n")
           (xiiif-ui--insert-heading "Thumbnail")
           (setq thumb-marker (point-marker)))
-        (goto-char (point-min))))
+        (goto-char (point-min)))
+      (run-hook-with-args 'xiiif-after-render-canvas-hook canvas))
     (pop-to-buffer-same-window buf)
     (when thumb-marker
       (xiiif-ui--insert-thumbnail-async canvas buf thumb-marker))))

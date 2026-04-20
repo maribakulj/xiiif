@@ -52,6 +52,8 @@
 (require 'xiiif-cache)
 (require 'xiiif-image)
 (require 'xiiif-annotations)
+(require 'xiiif-ocr)
+(require 'xiiif-sources)
 (require 'xiiif-ui)
 (require 'xiiif-org)
 (require 'xiiif-cite)
@@ -303,6 +305,23 @@ label.  Canvases without an image service are skipped silently."
                  saved (if (= 1 saved) "" "es") dir
                  (if (> skipped 0)
                      (format " (%d skipped)" skipped) ""))))))
+
+;;;###autoload
+(defun xiiif-show-annotations ()
+  "Fetch and display non-painting annotations for the contextual canvas.
+Inline AnnotationPages are rendered immediately; external references
+are resolved asynchronously and merged in document order."
+  (interactive)
+  (let ((canvas (xiiif--require-canvas)))
+    (message "xiiif: collecting annotations...")
+    (xiiif-annotations-collect
+     canvas
+     (lambda (annotations)
+       (xiiif-ui-render-annotations canvas annotations)
+       (message "xiiif: %d annotation%s on %s"
+                (length annotations)
+                (if (= 1 (length annotations)) "" "s")
+                (xiiif-canvas-title canvas))))))
 
 ;;;###autoload
 (defun xiiif-show-info-json (&optional target)

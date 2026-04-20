@@ -245,6 +245,27 @@ Signals `xiiif-parse-error' if JSON does not look like a manifest."
         (format "%d. %s" index lbl)
       lbl)))
 
+(defun xiiif-canvas-filesystem-slug (canvas)
+  "Return a filesystem-safe slug derived from CANVAS.
+Uses the canvas label when available, falling back to the id's last
+path segment.  Non-alphanumeric characters are folded to `_', runs of
+underscores collapsed, and the result trimmed to a reasonable length.
+Always returns a non-empty string (\"canvas\" as last resort)."
+  (let* ((label (and canvas (xiiif-label-string (xiiif-canvas-label canvas))))
+         (id    (and canvas (xiiif-canvas-id canvas)))
+         (source
+          (cond
+           ((and label (not (string-empty-p label))) label)
+           ((and id (not (string-empty-p id)))
+            (car (last (split-string id "/" t))))
+           (t "canvas")))
+         (slug (replace-regexp-in-string "[^[:alnum:]._-]+" "_" source))
+         (slug (replace-regexp-in-string "_+" "_" slug))
+         (slug (replace-regexp-in-string "\\`_+\\|_+\\'" "" slug)))
+    (if (string-empty-p slug)
+        "canvas"
+      (if (> (length slug) 64) (substring slug 0 64) slug))))
+
 (defun xiiif--thumbnail-field-url (thumbnail)
   "Return a URL string from a IIIF `thumbnail' field THUMBNAIL or nil.
 Accepts v2 (string or single object with id/@id) and v3 (array of

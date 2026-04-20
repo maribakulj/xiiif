@@ -97,5 +97,47 @@ objects without inline items are returned as external URL refs."
                 (list :inline nil :url (xiiif--get a 'id))))
             annos)))
 
+
+;;; ---------- orchestrated fetch ----------
+
+(defun xiiif-annotations-collect (canvas callback)
+  "Resolve every annotation attached to CANVAS and call CALLBACK.
+Inline AnnotationPages are parsed immediately; external references
+are fetched asynchronously.  CALLBACK is invoked exactly once with
+the final list of `xiiif-annotation' structs in document order."
+  (let* ((refs (xiiif-canvas-annotation-refs canvas))
+         (slots (make-vector (length refs) nil))
+         (pending 0)
+         (finish
+          (lambda ()
+            (funcall callback
+                     (apply #'append (append slots nil))))))
+    (if (null refs)
+        (funcall callback nil)
+      (cl-loop
+       for ref in refs
+       for i from 0
+       do
+       (let ((inline (plist-get ref :inline))
+             (url    (plist-get ref :url)))
+         (cond
+          (inline
+           (aset slots i (xiiif-parse-annotation-page inline)))
+          (url
+           (cl-incf pending)
+           (let ((idx i))
+             (xiiif-api-fetch-json-async
+              url
+              (lambda (json)
+                (aset slots idx (xiiif-parse-annotation-page json))
+                (cl-decf pending)
+                (when (zerop pending) (funcall finish)))
+              (lambda (_err)
+                (aset slots idx nil)
+                (cl-decf pending)
+                (when (zerop pending) (funcall finish))))))
+          (t (aset slots i nil)))))
+      (when (zerop pending) (funcall finish)))))
+
 (provide 'xiiif-annotations)
 ;;; xiiif-annotations.el ends here

@@ -24,6 +24,7 @@
 (ert-deftest xiiif-api--valid-url-p/obvious ()
   (should (xiiif-api--valid-url-p "https://example.org/iiif/m"))
   (should (xiiif-api--valid-url-p "http://x/m"))
+  (should (xiiif-api--valid-url-p "file:///tmp/m.json"))
   (should-not (xiiif-api--valid-url-p "ftp://x/m"))
   (should-not (xiiif-api--valid-url-p "example.org/iiif/m"))
   (should-not (xiiif-api--valid-url-p "   "))
