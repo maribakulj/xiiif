@@ -158,6 +158,8 @@ All commands are autoloaded.
 | `xiiif-download-marked`     | Bulk-download every marked canvas in the browser to a directory. |
 | `xiiif-show-info-json`      | Fetch and display the Image API `info.json` for a canvas.        |
 | `xiiif-show-structures`     | Open the structural navigator (Ranges) for the current manifest. |
+| `xiiif-show-annotations`    | Fetch and display non-painting annotations for the current canvas. |
+| `xiiif-show-ocr`            | Fetch and display an ALTO/hOCR/plain-text OCR sidecar.           |
 | `xiiif-insert-org-link`     | Insert a manifest, canvas, image link, or metadata block.        |
 | `xiiif-export-citation`     | Export the manifest as BibTeX or CSL-JSON (insert or kill-ring). |
 
@@ -186,6 +188,8 @@ share a vocabulary of keys.
 | `*XIIIF Collection*`   | `xiiif-collection-mode`    | `tabulated-list-mode`  |
 | `*XIIIF Image Info*`   | `xiiif-info-mode`          | `special-mode`         |
 | `*XIIIF Structures*`   | `xiiif-structures-mode`    | `special-mode`         |
+| `*XIIIF Annotations*`  | `xiiif-annotations-mode`   | `special-mode`         |
+| `*XIIIF OCR*`          | `xiiif-ocr-mode`           | `special-mode`         |
 
 Common bindings:
 
@@ -200,6 +204,7 @@ Common bindings:
 | `i`   | Insert an Org link (or copy to kill-ring in read-only buffers) |
 | `I`   | Fetch and display the image service `info.json` (canvas detail)|
 | `a`   | Fetch and display annotations for the canvas (canvas detail)   |
+| `O`   | Fetch and display an OCR/ALTO/hOCR sidecar (canvas detail)     |
 | `J`   | Show raw JSON                                                  |
 | `g`   | Refresh                                                        |
 | `q`   | `quit-window`                                                  |
@@ -410,16 +415,20 @@ v2-style `sc:` type prefixes are stripped on the way in.
 
 ```
 xiiif/
-  xiiif.el          ; package entry, public commands, dispatch
-  xiiif-api.el      ; sync + async HTTP, JSON parse, typed errors
-  xiiif-core.el     ; data model, tolerant v2/v3 parser
-  xiiif-cache.el    ; in-memory state + persisted recent list
-  xiiif-image.el    ; IIIF Image API URL builder, download
-  xiiif-ui.el       ; major modes & buffers
-  xiiif-org.el      ; Org link / metadata insertion
-  xiiif-cite.el     ; BibTeX / CSL-JSON export
-  tests/            ; ERT tests
-  examples/         ; sample manifest + collection fixtures
+  xiiif.el            ; package entry, public commands, dispatch
+  xiiif-api.el        ; sync + async HTTP, JSON parse, typed errors
+  xiiif-core.el       ; data model, tolerant v2/v3 parser
+  xiiif-cache.el      ; in-memory state + persisted recent list
+  xiiif-image.el      ; IIIF Image API URL builder, download
+  xiiif-annotations.el; non-painting annotations fetch + parse
+  xiiif-ocr.el        ; ALTO / hOCR / text sidecar fetch + extract
+  xiiif-profiles.el   ; per-host HTTP/Image profiles
+  xiiif-sources.el    ; named IIIF endpoint registry
+  xiiif-ui.el         ; major modes & buffers
+  xiiif-org.el        ; Org link / metadata insertion
+  xiiif-cite.el       ; BibTeX / CSL-JSON export
+  tests/              ; ERT tests
+  examples/           ; sample manifest + collection fixtures
 ```
 
 | Module          | Responsibility                                                      |

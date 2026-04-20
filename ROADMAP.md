@@ -11,8 +11,8 @@ deliberately speculative.
   manifests. *(shipped)*
 - [x] **Collections.** Detect `type: "Collection"` and render a
   browser that recurses into members on demand. *(shipped)*
-- [ ] **Structures / ranges.** Surface `structures` (v2) and `Range`
-  hierarchies (v3) as a navigable tree in a third buffer.
+- [x] **Structures / ranges.** Surface `structures` (v2) and `Range`
+  hierarchies (v3) as a navigable tree in a third buffer. *(shipped)*
 - [x] **Thumbnail preview.** When `display-graphic-p', render the
   canvas thumbnail inline in the canvas detail buffer using
   `create-image`. *(shipped)*
@@ -28,13 +28,15 @@ deliberately speculative.
 - [x] **Bulk derivative export.** Mark canvases in the browser and
   dump all selected derivatives to a directory with a uniform naming
   scheme. *(shipped)*
-- **Org-capture template.** Ship an `org-capture` template that
-  produces a standard note from a manifest, ready to drop in a
-  research journal.
+- [x] **Org-capture template.** Helpers `xiiif-org-capture-headline'
+  and `xiiif-org-capture-body' produce a ready-to-file research note
+  from the currently loaded manifest (and canvas, if any). *(shipped)*
 - [x] **Citation export.** Generate BibTeX / CSL-JSON entries from
   manifest metadata (title, date, rights, provider). *(shipped)*
-- **Annotation fetch.** Follow `AnnotationCollection` links from a
-  canvas and show annotations in a read-only buffer.
+- [x] **Annotation fetch.** `xiiif-show-annotations' resolves inline
+  AnnotationPages and external references asynchronously, merging
+  results in document order into a read-only buffer. *(shipped)*
+  `AnnotationCollection' pagination (`next' pointers) remains TODO.
 - [x] **transcript/ALTO sidecars.** When a canvas's `seeAlso' links
   OCR (ALTO / hOCR / plain text), fetch it and display extracted
   text in a dedicated sidecar buffer. *(shipped)*
@@ -45,9 +47,11 @@ deliberately speculative.
   (Gallica, Wellcome, Internet Archive by default) with identifier
   prompts and URL templates.  `xiiif-open-source' picks one and
   dispatches through `xiiif-open-manifest'. *(shipped)*
-- **Hooks.** `xiiif-after-load-manifest-hook`,
-  `xiiif-canvas-format-functions` and friends so users can extend the
-  UI without patching the package.
+- [x] **Hooks.** `xiiif-after-load-manifest-hook',
+  `xiiif-after-load-collection-hook' and
+  `xiiif-after-render-canvas-hook' fire at well-defined render
+  points so users can extend the UI without patching the
+  package. *(shipped)*
 - [x] **Per-server profiles.** `xiiif-server-profiles' is an alist
   keyed by URL regexp; entries can inject HTTP headers (auth
   tokens) and override Image API defaults (region/size/rotation/

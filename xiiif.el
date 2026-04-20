@@ -341,6 +341,42 @@ Canvases without an image service are counted as skipped."
       (if (zerop total) (finish) (step)))))
 
 ;;;###autoload
+(defun xiiif-show-ocr (&optional canvas ref)
+  "Fetch and display an OCR/ALTO/hOCR sidecar for the contextual canvas.
+When the canvas exposes more than one OCR ref, prompts to pick one.
+CANVAS and REF are passed explicitly when invoked non-interactively
+by `xiiif-ui--ocr-refresh'."
+  (interactive)
+  (let* ((c (or canvas (xiiif--require-canvas)))
+         (refs (xiiif-canvas-ocr-refs c)))
+    (unless refs
+      (user-error "No OCR (ALTO/hOCR/text) seeAlso on this canvas"))
+    (let ((chosen
+           (or ref
+               (if (= 1 (length refs))
+                   (car refs)
+                 (let* ((table (mapcar
+                                (lambda (r)
+                                  (cons (format "[%s] %s"
+                                                (plist-get r :format)
+                                                (or (plist-get r :label)
+                                                    (plist-get r :url)))
+                                        r))
+                                refs))
+                        (pick (completing-read "OCR source: "
+                                               (mapcar #'car table)
+                                               nil t)))
+                   (cdr (assoc pick table)))))))
+      (message "xiiif: fetching OCR...")
+      (xiiif-ocr-fetch-async
+       chosen
+       (lambda (enriched)
+         (xiiif-ui-render-ocr c enriched)
+         (message "xiiif: OCR (%s) for %s"
+                  (plist-get enriched :format)
+                  (xiiif-canvas-title c)))))))
+
+;;;###autoload
 (defun xiiif-show-annotations ()
   "Fetch and display non-painting annotations for the contextual canvas.
 Inline AnnotationPages are rendered immediately; external references

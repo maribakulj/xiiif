@@ -29,6 +29,7 @@
 (require 'xiiif-cache)
 (require 'xiiif-image)
 (require 'xiiif-annotations)
+(require 'xiiif-ocr)
 
 (defconst xiiif-ui--manifest-buffer    "*XIIIF Manifest*")
 (defconst xiiif-ui--canvases-buffer    "*XIIIF Canvases*")
@@ -37,6 +38,7 @@
 (defconst xiiif-ui--info-buffer        "*XIIIF Image Info*")
 (defconst xiiif-ui--structures-buffer  "*XIIIF Structures*")
 (defconst xiiif-ui--annotations-buffer "*XIIIF Annotations*")
+(defconst xiiif-ui--ocr-buffer         "*XIIIF OCR*")
 
 (defface xiiif-heading
   '((t :inherit font-lock-function-name-face :weight bold))
@@ -308,6 +310,7 @@
     (define-key map (kbd "i")   #'xiiif-insert-org-link)
     (define-key map (kbd "I")   #'xiiif-show-info-json)
     (define-key map (kbd "a")   #'xiiif-show-annotations)
+    (define-key map (kbd "O")   #'xiiif-show-ocr)
     (define-key map (kbd "J")   #'xiiif-show-raw-json)
     (define-key map (kbd "g")   #'xiiif-refresh)
     (define-key map (kbd "q")   #'quit-window)
@@ -728,6 +731,8 @@ The actual transfer runs asynchronously so Emacs stays responsive."
     (pop-to-buffer-same-window buf)))
 
 (declare-function xiiif-show-info-json "xiiif")
+(declare-function xiiif-show-annotations "xiiif")
+(declare-function xiiif-show-ocr "xiiif")
 
 (defun xiiif-ui--info-refresh ()
   "Re-fetch the current info.json."
@@ -813,6 +818,88 @@ ANNOTATIONS may be empty; the buffer still opens with a diagnostic."
             (xiiif-ui--insert-annotation a)))
         (goto-char (point-min))))
     (pop-to-buffer-same-window buf)))
+
+
+;;; ---------- OCR sidecar ----------
+
+(defvar xiiif-ocr-mode-map
+  (let ((map (make-sparse-keymap)))
+    (define-key map (kbd "y") #'xiiif-ui--ocr-copy-url)
+    (define-key map (kbd "g") #'xiiif-ui--ocr-refresh)
+    (define-key map (kbd "J") #'xiiif-ui--ocr-show-raw)
+    (define-key map (kbd "q") #'quit-window)
+    map)
+  "Keymap for `xiiif-ocr-mode'.")
+
+(define-derived-mode xiiif-ocr-mode special-mode "XIIIF-OCR"
+  "Major mode for the IIIF OCR/ALTO/hOCR sidecar buffer."
+  (buffer-disable-undo)
+  (setq-local truncate-lines nil))
+
+(defvar-local xiiif-ui--ocr-canvas nil
+  "The `xiiif-canvas' whose OCR the current buffer shows.")
+
+(defvar-local xiiif-ui--ocr-ref nil
+  "The OCR ref plist (augmented with :text/:body) rendered here.")
+
+(defun xiiif-ui-render-ocr (canvas ref)
+  "Render extracted OCR text for REF of CANVAS into the sidecar buffer.
+REF must have been enriched by `xiiif-ocr-fetch-async' with `:text'."
+  (let ((buf (get-buffer-create xiiif-ui--ocr-buffer)))
+    (with-current-buffer buf
+      (xiiif-ocr-mode)
+      (setq-local xiiif-ui--ocr-canvas canvas)
+      (setq-local xiiif-ui--ocr-ref ref)
+      (let ((inhibit-read-only t))
+        (erase-buffer)
+        (xiiif-ui--insert-hints
+         '(("y" . "copy URL") ("J" . "raw body")
+           ("g" . "refresh")  ("q" . "quit")))
+        (xiiif-ui--insert-heading
+         (format "%s  -  OCR (%s)"
+                 (xiiif-canvas-title canvas)
+                 (or (plist-get ref :format) "?")))
+        (xiiif-ui--insert-field "Source" (plist-get ref :url))
+        (xiiif-ui--insert-field "Label"  (plist-get ref :label))
+        (insert "\n")
+        (let ((text (or (plist-get ref :text) "")))
+          (if (string-empty-p text)
+              (insert "(no text extracted)\n")
+            (insert text)
+            (unless (string-suffix-p "\n" text) (insert "\n"))))
+        (goto-char (point-min))))
+    (pop-to-buffer-same-window buf)))
+
+(defun xiiif-ui--ocr-copy-url ()
+  "Copy the source URL of the current OCR sidecar to the kill ring."
+  (interactive)
+  (unless xiiif-ui--ocr-ref (user-error "No OCR loaded"))
+  (let ((url (plist-get xiiif-ui--ocr-ref :url)))
+    (kill-new url)
+    (message "Copied %s" url)))
+
+(defun xiiif-ui--ocr-show-raw ()
+  "Show the raw body of the current OCR sidecar in a separate buffer."
+  (interactive)
+  (unless xiiif-ui--ocr-ref (user-error "No OCR loaded"))
+  (let ((body (or (plist-get xiiif-ui--ocr-ref :body) ""))
+        (url  (plist-get xiiif-ui--ocr-ref :url))
+        (buf  (get-buffer-create "*XIIIF OCR raw*")))
+    (with-current-buffer buf
+      (let ((inhibit-read-only t))
+        (erase-buffer)
+        (insert body)
+        (goto-char (point-min))
+        (view-mode 1)))
+    (pop-to-buffer buf)
+    (message "Raw body of %s" url)))
+
+(defun xiiif-ui--ocr-refresh ()
+  "Re-fetch and re-render the OCR in the current sidecar buffer."
+  (interactive)
+  (unless (and xiiif-ui--ocr-canvas xiiif-ui--ocr-ref)
+    (user-error "No OCR context to refresh"))
+  (xiiif-show-ocr xiiif-ui--ocr-canvas xiiif-ui--ocr-ref))
 
 
 ;;; ---------- raw JSON ----------
