@@ -170,12 +170,16 @@ On success, CALLBACK is called with the parsed JSON value.
 On failure, ERRBACK is called with a list (ERROR-SYMBOL URL &rest DATA);
 when ERRBACK is nil, `xiiif-api--default-errback' shows a message.
 
-Returns immediately; the HTTP request runs in the background.  Both
-CALLBACK and ERRBACK run on Emacs's main thread, so they may update
-buffers and UI directly."
+Returns the `url-retrieve' response buffer (a cancellable handle)
+or nil when the URL was invalid.  Both CALLBACK and ERRBACK run on
+Emacs's main thread, so they may update buffers and UI directly.
+To cancel an in-flight request, pass the returned handle to
+`xiiif-api-cancel'."
   (let ((errback (or errback #'xiiif-api--default-errback)))
     (if (not (xiiif-api--valid-url-p url))
-        (funcall errback (list 'xiiif-network-error url "invalid URL"))
+        (progn
+          (funcall errback (list 'xiiif-network-error url "invalid URL"))
+          nil)
       (let ((url-request-extra-headers (xiiif-api--request-headers url))
             (url-mime-accept-string
              "application/ld+json, application/json"))
@@ -205,7 +209,19 @@ buffers and UI directly."
           (error
            (funcall errback
                     (list 'xiiif-network-error url
-                          (error-message-string err)))))))))
+                          (error-message-string err)))
+           nil))))))
+
+(defun xiiif-api-cancel (handle)
+  "Cancel an in-flight request referenced by HANDLE.
+HANDLE is the buffer returned by `xiiif-api-fetch-json-async' or
+`xiiif-api-fetch-bytes-async'.  Killing the buffer tears down the
+underlying process, which aborts the sentinel and therefore the
+callback chain.  Safe to call with nil or a dead buffer."
+  (when (buffer-live-p handle)
+    (let ((proc (get-buffer-process handle)))
+      (when proc (delete-process proc)))
+    (kill-buffer handle)))
 
 (defun xiiif-api-fetch-bytes-async (url callback &optional errback)
   "Fetch URL asynchronously and pass the raw body to CALLBACK.
@@ -251,10 +267,13 @@ shape used by `xiiif-api-fetch-json-async'."
                         (error-message-string err))))))))
 
 (defun xiiif-api-download-file (url destination)
-  "Download URL to DESTINATION, overwriting if it exists.
+  "Download URL to DESTINATION synchronously, overwriting if it exists.
 Any headers declared by a matching `xiiif-server-profiles' entry
 are applied to the request.  Returns DESTINATION on success or
-signals an `xiiif-network-error'."
+signals an `xiiif-network-error'.
+
+Kept for scripting; interactive commands should use
+`xiiif-api-download-file-async' to avoid blocking Emacs."
   (unless (xiiif-api--valid-url-p url)
     (signal 'xiiif-network-error (list url "invalid URL")))
   (let ((url-request-extra-headers (xiiif-api--request-headers url)))
@@ -265,6 +284,37 @@ signals an `xiiif-network-error'."
       (error
        (signal 'xiiif-network-error
                (list url (error-message-string err)))))))
+
+(defun xiiif-api-download-file-async (url destination callback &optional errback)
+  "Download URL to DESTINATION asynchronously.
+
+On success, CALLBACK is called with the absolute path of the saved
+file.  On failure, ERRBACK (or the default reporter) is called with
+the same (ERROR-SYMBOL URL &rest DATA) shape used by
+`xiiif-api-fetch-json-async'.
+
+Parent directories of DESTINATION are created if missing.  Any
+headers declared by a matching `xiiif-server-profiles' entry are
+applied to the request."
+  (let* ((errback (or errback #'xiiif-api--default-errback))
+         (dest    (expand-file-name destination))
+         (dir     (file-name-directory dest)))
+    (when (and dir (not (file-directory-p dir)))
+      (make-directory dir t))
+    (xiiif-api-fetch-bytes-async
+     url
+     (lambda (bytes)
+       (condition-case err
+           (let ((coding-system-for-write 'binary))
+             (with-temp-file dest
+               (set-buffer-multibyte nil)
+               (insert bytes))
+             (funcall callback dest))
+         (error
+          (funcall errback
+                   (list 'xiiif-error url
+                         (error-message-string err))))))
+     errback)))
 
 (provide 'xiiif-api)
 ;;; xiiif-api.el ends here

@@ -406,26 +406,29 @@ fetches a small preview asynchronously and inserts it at the end."
 
 (defun xiiif-ui-download-canvas-image (canvas)
   "Interactively download an image derived from CANVAS.
-Prompts for size and destination; other parameters take defaults."
+Prompts for size and destination; other parameters take defaults.
+The actual transfer runs asynchronously so Emacs stays responsive."
   (let* ((service (xiiif-canvas-image-service canvas))
          (_       (unless service
                     (user-error "Canvas has no image service")))
          (size    (read-string
                    (format "Size (default %s): " xiiif-image-default-size)
                    nil nil xiiif-image-default-size))
-         (format  (read-string
+         (fmt     (read-string
                    (format "Format (default %s): " xiiif-image-default-format)
                    nil nil xiiif-image-default-format))
          (default (expand-file-name
-                   (xiiif-image-suggested-filename service format)
+                   (xiiif-image-suggested-filename service fmt)
                    xiiif-image-download-directory))
          (destination (read-file-name "Save image to: "
                                       (file-name-directory default)
                                       default nil
                                       (file-name-nondirectory default))))
-    (message "Downloading...")
-    (xiiif-image-download canvas destination :size size :format format)
-    (message "Saved %s" destination)))
+    (message "xiiif: downloading...")
+    (xiiif-image-download-async
+     canvas destination
+     (lambda (path) (message "xiiif: saved %s" path))
+     :size size :format fmt)))
 
 
 ;;; ---------- collection browser ----------
