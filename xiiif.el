@@ -178,7 +178,7 @@ the appropriate buffer."
      (xiiif-cache-set-canvas nil)
      (xiiif-ui-render-manifest manifest)
      (run-hook-with-args 'xiiif-after-load-manifest-hook manifest)
-     (let ((n (length (xiiif-manifest-canvases manifest))))
+     (let ((n (xiiif-manifest-canvas-count manifest)))
        (message "xiiif: loaded %s (%d canvas%s)"
                 (xiiif-manifest-title manifest)
                 n (if (= 1 n) "" "es"))))

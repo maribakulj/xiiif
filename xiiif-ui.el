@@ -129,10 +129,11 @@
             (xiiif-ui--insert-heading "Metadata")
             (dolist (pair pairs)
               (xiiif-ui--insert-field (car pair) (cdr pair)))))
-        (let ((canvases (xiiif-manifest-canvases manifest)))
+        (progn
           (insert "\n")
           (xiiif-ui--insert-heading
-           (format "Canvases (%d)" (length canvases)))
+           (format "Canvases (%d)"
+                   (xiiif-manifest-canvas-count manifest)))
           (insert "Press RET or c to browse.\n"))
         (let ((structures (xiiif-manifest-structures manifest)))
           (when structures
