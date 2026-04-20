@@ -47,7 +47,7 @@
                                                           (height . 200)
                                                           (service . ((@id . "http://img")
                                                                       (@type . "ImageService2")
-                                                                      (profile . "level1"))))))]))])))]))
+                                                                      (profile . "level1"))))))]))]))])))
 
 (ert-deftest xiiif-upgrade-manifest/normalises-v2 ()
   (let ((v3 (xiiif-upgrade-manifest xiiif-upgrade-test--v2-manifest)))

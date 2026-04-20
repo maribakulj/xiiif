@@ -111,7 +111,7 @@
                                                                (service .
                                                                         ((@id . "http://x/img")
                                                                          (@type . "ImageService2")
-                                                                         (profile . "level1"))))))]))])))]))))
+                                                                         (profile . "level1"))))))]))]))])))
          (m (xiiif-parse-manifest v2 "http://x/m"))
          (canvases (xiiif-manifest-canvases m)))
     (should (= 1 (length canvases)))
