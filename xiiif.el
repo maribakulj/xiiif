@@ -46,6 +46,7 @@
 (require 'cl-lib)
 (require 'subr-x)
 
+(require 'xiiif-errors)
 (require 'xiiif-profiles)
 (require 'xiiif-api)
 (require 'xiiif-core)
@@ -531,9 +532,7 @@ presses do not race."
         ((eq mode 'xiiif-canvas-list-mode)
          (xiiif-ui-render-canvases fresh))
         ((eq mode 'xiiif-canvas-mode)
-         (let ((match (and canvas-id
-                           (cl-find canvas-id (xiiif-manifest-canvases fresh)
-                                    :key #'xiiif-canvas-id :test #'equal))))
+         (let ((match (xiiif-manifest-find-canvas fresh canvas-id)))
            (if match
                (progn (xiiif-cache-set-canvas match)
                       (xiiif-ui-render-canvas match))

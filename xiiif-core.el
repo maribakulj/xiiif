@@ -19,6 +19,7 @@
 
 (require 'cl-lib)
 (require 'subr-x)
+(require 'xiiif-errors)
 
 (defcustom xiiif-preferred-languages '("en" "none" "und")
   "Preferred language tags when resolving IIIF language maps.

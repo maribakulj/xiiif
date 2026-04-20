@@ -22,12 +22,8 @@
 (require 'json)
 (require 'url)
 (require 'url-http)
+(require 'xiiif-errors)
 (require 'xiiif-profiles)
-
-(define-error 'xiiif-error "xiiif error")
-(define-error 'xiiif-network-error "xiiif network error" 'xiiif-error)
-(define-error 'xiiif-http-error    "xiiif HTTP error"    'xiiif-error)
-(define-error 'xiiif-parse-error   "xiiif JSON parse error" 'xiiif-error)
 
 (defcustom xiiif-api-timeout 30
   "Timeout in seconds for synchronous IIIF HTTP requests."
