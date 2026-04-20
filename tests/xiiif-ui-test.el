@@ -172,9 +172,9 @@
        :text "hello world" :body "<alto/>"))
     (with-current-buffer xiiif-ui--ocr-buffer
       (should (derived-mode-p 'xiiif-ocr-mode))
-      (goto-char (point-min))
-      (should (search-forward "hello world" nil t))
-      (should (search-forward "ALTO" nil t)))))
+      (let ((body (buffer-string)))
+        (should (string-match-p "hello world" body))
+        (should (string-match-p "ALTO" body))))))
 
 
 (provide 'xiiif-ui-test)

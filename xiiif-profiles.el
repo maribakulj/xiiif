@@ -78,24 +78,34 @@ a request URL wins.  Supported plist keys:
   "Return an (HEADER . VALUE) cons for URL's auth profile, or nil.
 Looks up a secret via `auth-source-search' using :host and optional
 :user taken from the matched profile's `:auth' plist.  The default
-authentication scheme is Bearer; override with `:scheme'."
-  (when-let* ((auth (plist-get (xiiif-profile-for-url url) :auth))
-              (_    (require 'auth-source nil t))
-              (host (or (plist-get auth :host)
-                        (xiiif-profile--url-host url)))
-              (hits (ignore-errors
-                      (auth-source-search
-                       :host host
-                       :user (plist-get auth :user)
-                       :max  1
-                       :require '(:secret))))
-              (entry (car hits))
-              (raw (plist-get entry :secret))
-              (secret (if (functionp raw) (funcall raw) raw)))
-    (cons "Authorization"
-          (format "%s %s"
-                  (or (plist-get auth :scheme) "Bearer")
-                  secret))))
+authentication scheme is Bearer; override with `:scheme'.
+
+The auth lookup is triggered as soon as the matched profile declares
+an `:auth' key (even with an empty plist value), so
+`(:auth nil)' and `(:auth (:scheme \"Token\"))' both work."
+  (let ((profile (xiiif-profile-for-url url)))
+    (when (plist-member profile :auth)
+      (let ((auth (plist-get profile :auth)))
+        (when (require 'auth-source nil t)
+          (let* ((host (or (plist-get auth :host)
+                           (xiiif-profile--url-host url)))
+                 (hits (and host
+                            (ignore-errors
+                              (auth-source-search
+                               :host host
+                               :user (plist-get auth :user)
+                               :max  1
+                               :require '(:secret)))))
+                 (entry (car hits))
+                 (raw (and entry (plist-get entry :secret)))
+                 (secret (cond ((null raw) nil)
+                               ((functionp raw) (funcall raw))
+                               (t raw))))
+            (when secret
+              (cons "Authorization"
+                    (format "%s %s"
+                            (or (plist-get auth :scheme) "Bearer")
+                            secret)))))))))
 
 (provide 'xiiif-profiles)
 ;;; xiiif-profiles.el ends here

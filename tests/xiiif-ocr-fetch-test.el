@@ -58,7 +58,7 @@
     (should (xiiif-ocr-fetch-test--wait-for (lambda () got)))
     (should (equal "hello" (plist-get got :text)))
     (should (string-match-p "<alto>" (plist-get got :body)))
-    (should (equal alto (plist-get got :format)))))
+    (should (equal 'alto (plist-get got :format)))))
 
 
 (ert-deftest xiiif-ocr-fetch-async/respects-extract-flag ()
