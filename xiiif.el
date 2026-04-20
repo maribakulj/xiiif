@@ -4,7 +4,7 @@
 
 ;; Author: The xiiif authors
 ;; Maintainer: The xiiif authors
-;; Version: 0.1.0
+;; Version: 0.2.0
 ;; Package-Requires: ((emacs "27.1"))
 ;; Homepage: https://github.com/maribakulj/xiiif
 ;; Keywords: hypermedia, multimedia, iiif, digital-humanities
@@ -65,7 +65,7 @@
   :prefix "xiiif-"
   :link '(url-link "https://github.com/maribakulj/xiiif"))
 
-(defconst xiiif-version "0.1.0"
+(defconst xiiif-version "0.2.0"
   "Current version of the xiiif package.")
 
 
@@ -115,13 +115,6 @@ Falls back to `xiiif-current-canvas' when no buffer context applies."
   "Return a canvas or signal a helpful user-error."
   (or (xiiif--canvas-in-context)
       (user-error "No canvas selected; open one with `xiiif-open-canvas'")))
-
-(defun xiiif--fetch-and-parse (url)
-  "Fetch URL synchronously and return a parsed `xiiif-manifest'.
-Kept as an escape hatch for scripting; interactive commands use
-the asynchronous path via `xiiif--load-manifest-async'."
-  (let ((json (xiiif-api-fetch-json url)))
-    (xiiif-parse-manifest json url)))
 
 (defun xiiif--load-resource-async (url on-manifest on-collection)
   "Fetch URL asynchronously and dispatch to ON-MANIFEST or ON-COLLECTION.
