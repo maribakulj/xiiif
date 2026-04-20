@@ -34,7 +34,12 @@
                  xiiif-open-recent
                  xiiif-retry-last
                  xiiif-toggle-thumbnails
-                 xiiif-cache-clear))
+                 xiiif-cache-clear
+                 xiiif-cache-clear-http
+                 xiiif-open-in-mirador
+                 xiiif-search
+                 xiiif-upgrade-manifest
+                 xiiif-upgrade-collection))
     (should (fboundp sym))))
 
 
@@ -71,7 +76,9 @@
 ;;; ---- modules loaded by `(require 'xiiif)' ----
 
 (ert-deftest xiiif-smoke/modules-loaded ()
-  (dolist (feat '(xiiif-profiles
+  (dolist (feat '(xiiif-errors
+                  xiiif-profiles
+                  xiiif-http-cache
                   xiiif-api
                   xiiif-core
                   xiiif-cache
@@ -81,7 +88,9 @@
                   xiiif-sources
                   xiiif-ui
                   xiiif-org
-                  xiiif-cite))
+                  xiiif-cite
+                  xiiif-upgrade
+                  xiiif-search))
     (should (featurep feat))))
 
 

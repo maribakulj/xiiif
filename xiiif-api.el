@@ -24,6 +24,7 @@
 (require 'url-http)
 (require 'xiiif-errors)
 (require 'xiiif-profiles)
+(require 'xiiif-http-cache)
 
 (defcustom xiiif-api-timeout 30
   "Timeout in seconds for synchronous IIIF HTTP requests."
@@ -31,7 +32,7 @@
   :group 'xiiif)
 
 (defcustom xiiif-api-user-agent
-  (format "xiiif.el/0.2.0 Emacs/%s" emacs-version)
+  (format "xiiif.el/0.3.0 Emacs/%s" emacs-version)
   "User-Agent string used for IIIF HTTP requests."
   :type 'string
   :group 'xiiif)
@@ -84,6 +85,16 @@ Point must be at the beginning of the buffer.  Returns an integer or nil."
            "^Content-Type:[ \t]*\\([^\r\n;]+\\)" nil t)
       (downcase (string-trim (match-string 1))))))
 
+(defun xiiif-api--header-value (name)
+  "Return the value of response header NAME in the current buffer, or nil."
+  (save-excursion
+    (goto-char (point-min))
+    (when (re-search-forward
+           (format "^%s:[ \t]*\\(.*?\\)[ \t]*\r?$"
+                   (regexp-quote name))
+           nil t)
+      (match-string 1))))
+
 (defun xiiif-api--warn-content-type (url ct)
   "Emit a lazy warning when CT is present and does not look like JSON."
   (when (and ct (not (string-match-p
@@ -97,15 +108,32 @@ Point must be at the beginning of the buffer.  Returns an integer or nil."
 
 (defun xiiif-api--response-json (url)
   "Parse the current `url' response buffer as IIIF JSON for URL.
-Signals `xiiif-http-error' on non-2xx responses and
-`xiiif-parse-error' on invalid JSON.  A mismatching Content-Type is
-reported via `display-warning' but not treated as an error."
+Signals `xiiif-http-error' on non-4xx/5xx responses (other than
+304, which is served from the on-disk cache) and `xiiif-parse-error'
+on invalid JSON.  A mismatching Content-Type triggers a lazy
+`display-warning' but is not treated as an error.  On 2xx responses
+that carry an `ETag' or `Last-Modified' validator, the decoded body
+is persisted via `xiiif-http-cache-store' for future conditional
+fetches."
   (let ((status (xiiif-api--status-code))
         (ct     (xiiif-api--content-type)))
-    (when (and status (or (< status 200) (>= status 400)))
+    (cond
+     ((eql status 304)
+      (let ((entry (xiiif-http-cache-lookup url)))
+        (unless entry
+          (signal 'xiiif-http-error
+                  (list url 304 "304 without cache entry")))
+        (xiiif-api--parse-json (plist-get entry :body) url)))
+     ((and status (or (< status 200) (>= status 400)))
       (signal 'xiiif-http-error (list url status)))
-    (xiiif-api--warn-content-type url ct)
-    (xiiif-api--parse-json (xiiif-api--decode-body) url)))
+     (t
+      (xiiif-api--warn-content-type url ct)
+      (let ((body (xiiif-api--decode-body))
+            (etag (xiiif-api--header-value "ETag"))
+            (lm   (xiiif-api--header-value "Last-Modified")))
+        (when (or etag lm)
+          (xiiif-http-cache-store url body etag lm))
+        (xiiif-api--parse-json body url))))))
 
 (defun xiiif-api--request-headers (&optional url)
   "Return the HTTP request header alist used by every xiiif call.
@@ -113,16 +141,20 @@ When URL matches an entry in `xiiif-server-profiles', any explicit
 `:headers' are appended and, if the profile declares `:auth', an
 `Authorization' header is resolved via `auth-source' and appended
 last (so an explicit `:headers' entry still wins for the same
-header name)."
+header name).  Conditional cache validators
+(`If-None-Match' / `If-Modified-Since') are appended when a cached
+entry exists for URL."
   (let* ((base
           `(("Accept"     . "application/ld+json, application/json")
             ("User-Agent" . ,xiiif-api-user-agent)))
          (profile-headers (xiiif-profile-headers url))
          (auth (unless (assoc-string "Authorization" profile-headers t)
-                 (xiiif-profile-auth-header url))))
+                 (xiiif-profile-auth-header url)))
+         (conditional (and url (xiiif-http-cache-conditional-headers url))))
     (append base
             profile-headers
-            (and auth (list auth)))))
+            (and auth (list auth))
+            conditional)))
 
 (defun xiiif-api-fetch-json (url)
   "Fetch URL synchronously and return parsed JSON.

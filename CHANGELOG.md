@@ -4,6 +4,36 @@ All notable changes to `xiiif` are documented here.  The format is
 based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/)
 and the project adheres to [Semantic Versioning](https://semver.org/).
 
+## [0.3.0] — 2026-04 (unreleased)
+
+Extends 0.2 with the "later / uncertain" items from `ROADMAP.md`.
+
+### Added
+
+- `xiiif-http-cache.el`: on-disk cache keyed by URL, storing body
+  plus `ETag` / `Last-Modified` validators.  Conditional
+  `If-None-Match` / `If-Modified-Since` are attached automatically
+  to every xiiif GET; a 304 response is served from the cache.
+  Interactive `xiiif-cache-clear-http` wipes the cache.
+- `xiiif-upgrade.el`: `xiiif-upgrade-manifest` and
+  `xiiif-upgrade-collection` return a canonical v3-shaped alist
+  (language-map labels, unified `items`, v2 images wrapped into
+  AnnotationPages, `sc:`-prefix stripped).  Use it before handing
+  data to v3-only consumers.
+- `xiiif-search.el`: minimal client for IIIF Search API 1.0.
+  `xiiif-search` queries the service advertised by the current
+  manifest and lists hits in `*XIIIF Search*`; RET jumps to the
+  targeted canvas.
+- `xiiif-open-in-mirador`: open the current manifest in an external
+  Mirador viewer via `browse-url`; base URL customisable through
+  `xiiif-mirador-base-url`.
+
+### Fixed
+
+- Response parser now recognises a 304 Not Modified as a cache
+  revalidation rather than an error, eliminating needless re-parses
+  on repeated opens.
+
 ## [0.2.0] — 2026-04 (unreleased)
 
 The 0.2 cycle finishes the `ROADMAP.md` 0.2 / 0.3 / 0.4 sprints and

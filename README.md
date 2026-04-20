@@ -77,8 +77,8 @@ Typical use cases:
 
 | Field           | Value                                                        |
 | --------------- | ------------------------------------------------------------ |
-| Version         | `0.2.0`                                                      |
-| Stability       | Feature-complete for 0.2; APIs may still shift before 1.0    |
+| Version         | `0.3.0`                                                      |
+| Stability       | Feature-complete for 0.3; APIs may still shift before 1.0    |
 | Emacs           | 27.1 or newer                                                |
 | Built on        | `url.el`, `json.el`, `tabulated-list`, `cl-lib`, `auth-source` (for `:auth` profiles) |
 | External deps   | none                                                         |
@@ -160,6 +160,8 @@ All commands are autoloaded.
 | `xiiif-show-structures`     | Open the structural navigator (Ranges) for the current manifest. |
 | `xiiif-show-annotations`    | Fetch and display non-painting annotations for the current canvas. |
 | `xiiif-show-ocr`            | Fetch and display an ALTO/hOCR/plain-text OCR sidecar.           |
+| `xiiif-search`              | Query the current manifest's IIIF Search 1.0 service.            |
+| `xiiif-open-in-mirador`     | Open the current manifest in an external Mirador viewer.         |
 | `xiiif-insert-org-link`     | Insert a manifest, canvas, image link, or metadata block.        |
 | `xiiif-export-citation`     | Export the manifest as BibTeX or CSL-JSON (insert or kill-ring). |
 
@@ -174,6 +176,9 @@ All commands are autoloaded.
 | `xiiif-retry-last`          | Re-issue the most recent failed fetch.                           |
 | `xiiif-toggle-thumbnails`   | Enable or disable inline canvas-thumbnail previews.              |
 | `xiiif-cache-clear`         | Drop in-memory state (does not touch the history file).          |
+| `xiiif-cache-clear-http`    | Wipe the on-disk HTTP response cache.                            |
+| `xiiif-upgrade-manifest`    | Return a canonical v3-shaped alist from a v2/v3 manifest JSON.   |
+| `xiiif-upgrade-collection`  | Return a canonical v3-shaped alist from a v2/v3 collection JSON. |
 
 ## Buffers and keymaps
 
@@ -190,6 +195,7 @@ share a vocabulary of keys.
 | `*XIIIF Structures*`   | `xiiif-structures-mode`    | `special-mode`         |
 | `*XIIIF Annotations*`  | `xiiif-annotations-mode`   | `special-mode`         |
 | `*XIIIF OCR*`          | `xiiif-ocr-mode`           | `special-mode`         |
+| `*XIIIF Search*`       | `xiiif-search-mode`        | `tabulated-list-mode`  |
 
 Common bindings:
 
@@ -416,7 +422,9 @@ v2-style `sc:` type prefixes are stripped on the way in.
 ```
 xiiif/
   xiiif.el            ; package entry, public commands, dispatch
+  xiiif-errors.el     ; shared define-error symbols
   xiiif-api.el        ; sync + async HTTP, JSON parse, typed errors
+  xiiif-http-cache.el ; on-disk ETag / Last-Modified cache
   xiiif-core.el       ; data model, tolerant v2/v3 parser
   xiiif-cache.el      ; in-memory state + persisted recent list
   xiiif-image.el      ; IIIF Image API URL builder, download
@@ -424,6 +432,8 @@ xiiif/
   xiiif-ocr.el        ; ALTO / hOCR / text sidecar fetch + extract
   xiiif-profiles.el   ; per-host HTTP/Image profiles
   xiiif-sources.el    ; named IIIF endpoint registry
+  xiiif-upgrade.el    ; v2 -> v3 manifest/collection normalisation
+  xiiif-search.el     ; IIIF Search API 1.0 client
   xiiif-ui.el         ; major modes & buffers
   xiiif-org.el        ; Org link / metadata insertion
   xiiif-cite.el       ; BibTeX / CSL-JSON export

@@ -4,7 +4,7 @@
 
 ;; Author: The xiiif authors
 ;; Maintainer: The xiiif authors
-;; Version: 0.2.0
+;; Version: 0.3.0
 ;; Package-Requires: ((emacs "27.1"))
 ;; Homepage: https://github.com/maribakulj/xiiif
 ;; Keywords: hypermedia, multimedia, iiif, digital-humanities
@@ -48,6 +48,7 @@
 
 (require 'xiiif-errors)
 (require 'xiiif-profiles)
+(require 'xiiif-http-cache)
 (require 'xiiif-api)
 (require 'xiiif-core)
 (require 'xiiif-cache)
@@ -58,6 +59,8 @@
 (require 'xiiif-ui)
 (require 'xiiif-org)
 (require 'xiiif-cite)
+(require 'xiiif-upgrade)
+(require 'xiiif-search)
 
 (defgroup xiiif nil
   "Emacs-native IIIF workbench."
@@ -65,7 +68,7 @@
   :prefix "xiiif-"
   :link '(url-link "https://github.com/maribakulj/xiiif"))
 
-(defconst xiiif-version "0.2.0"
+(defconst xiiif-version "0.3.0"
   "Current version of the xiiif package.")
 
 
@@ -579,6 +582,29 @@ cleared before the retry, so a second failure is reported fresh."
       (user-error "Last error has no URL to retry"))
     (setq xiiif-api-last-error nil)
     (xiiif-open-manifest url)))
+
+(defcustom xiiif-mirador-base-url
+  "https://projectmirador.org/embed/"
+  "Base URL of the Mirador viewer used by `xiiif-open-in-mirador'.
+The manifest URL is appended as `?iiif-content=<encoded manifest url>'."
+  :type 'string
+  :group 'xiiif)
+
+;;;###autoload
+(defun xiiif-open-in-mirador ()
+  "Open the current manifest in an external Mirador viewer.
+Uses `browse-url' so Emacs's configured external browser is
+respected.  Signals `user-error' when no manifest is loaded."
+  (interactive)
+  (let* ((m (xiiif--require-manifest))
+         (url (or (xiiif-manifest-url m)
+                  (xiiif-manifest-id m)
+                  (user-error "Current manifest has no URL"))))
+    (browse-url
+     (format "%s?iiif-content=%s"
+             (string-trim-right xiiif-mirador-base-url "?&")
+             (url-hexify-string url)))
+    (message "xiiif: opening %s in Mirador" (xiiif-manifest-title m))))
 
 ;;;###autoload
 (defun xiiif-export-citation (&optional format)

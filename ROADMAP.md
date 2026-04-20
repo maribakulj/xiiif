@@ -57,19 +57,29 @@ deliberately speculative.
   tokens) and override Image API defaults (region/size/rotation/
   quality/format) for matching URLs. *(shipped)*
 
-## Later / uncertain
+## 0.3 / future
 
-- **Presentation API 2 → 3 normalization.** Beyond the current
-  tolerant parser, an explicit `xiiif-upgrade-manifest` that returns
-  a canonical v3-shaped alist.
-- **IIIF Search API 1.0.** Query search endpoints exposed on a
-  manifest and display hits as navigable results.
+- [x] **HTTP conditional cache.** On-disk store keyed by URL, with
+  ETag / Last-Modified validators, so subsequent fetches issue
+  `If-None-Match' / `If-Modified-Since' and take the 304
+  short-circuit. *(shipped)*
+- [x] **Presentation API 2 → 3 normalization.** `xiiif-upgrade-manifest'
+  and `xiiif-upgrade-collection' return a canonical v3-shaped alist
+  (sc:-prefix stripping, language-map labels, v2 images ->
+  AnnotationPage, collections+manifests -> items). *(shipped)*
+- [x] **IIIF Search API 1.0.** `xiiif-search' issues a query against
+  a manifest's advertised search service and renders the hits in a
+  navigable tabulated buffer. *(shipped)*
+- [x] **Mirador handoff.** `xiiif-open-in-mirador' opens the current
+  manifest in an external Mirador viewer via `browse-url'. *(shipped)*
 - **Transcription editor.** Write Web Annotation JSON back to a
   target server (probably gated behind a deliberate switch; writes
   are out of scope for 0.x).
-- **Mirador handoff.** A single command that opens the current
-  manifest in an external Mirador installation for users who do want
-  a GUI once they have triaged the manifest in Emacs.
+- **SQLite-backed collection index.** Optional indexing of huge
+  collections (10k+ manifests) behind a flag, Emacs 29+ only.
+- **AnnotationCollection pagination.** Follow `next' pointers in
+  annotation pages so transcriptions spanning many pages load
+  fully.
 
 Anything not on this list is fair game to propose. The rule is:
 if it earns its keep in a real workflow without dragging in
