@@ -19,6 +19,7 @@
 
 (require 'cl-lib)
 (require 'subr-x)
+(require 'xiiif-errors)
 
 (defcustom xiiif-preferred-languages '("en" "none" "und")
   "Preferred language tags when resolving IIIF language maps.
@@ -27,8 +28,12 @@ The first tag for which a value is present wins."
   :group 'xiiif)
 
 (cl-defstruct xiiif-manifest
-  "Normalized IIIF manifest."
-  url id type label summary metadata thumbnail items raw)
+  "Normalized IIIF manifest.
+CANVAS-CACHE and CANVAS-INDEX are populated lazily on first access
+so repeated calls to `xiiif-manifest-canvases' or
+`xiiif-manifest-find-canvas' do not re-parse the underlying JSON."
+  url id type label summary metadata thumbnail items raw
+  canvas-cache canvas-index)
 
 (cl-defstruct xiiif-canvas
   "Normalized IIIF canvas."
@@ -224,9 +229,29 @@ Signals `xiiif-parse-error' if JSON does not look like a manifest."
    :raw      json))
 
 (defun xiiif-manifest-canvases (manifest)
-  "Return a list of `xiiif-canvas' parsed from MANIFEST."
-  (mapcar #'xiiif-parse-canvas
-          (xiiif--as-list (xiiif-manifest-items manifest))))
+  "Return a list of `xiiif-canvas' parsed from MANIFEST.
+Memoised: the first call parses every canvas once; subsequent calls
+reuse the cached list.  Call `xiiif-manifest-invalidate-cache' after
+mutating the underlying items to force a re-parse."
+  (or (xiiif-manifest-canvas-cache manifest)
+      (let ((parsed (mapcar #'xiiif-parse-canvas
+                            (xiiif--as-list
+                             (xiiif-manifest-items manifest)))))
+        (setf (xiiif-manifest-canvas-cache manifest) parsed)
+        parsed)))
+
+(defun xiiif-manifest-canvas-count (manifest)
+  "Return the number of canvases declared by MANIFEST.
+Prefers the raw item count to avoid parsing every canvas when the
+overview only needs a length.  Falls back to the cached canvas list."
+  (or (and (xiiif-manifest-canvas-cache manifest)
+           (length (xiiif-manifest-canvas-cache manifest)))
+      (length (xiiif--as-list (xiiif-manifest-items manifest)))))
+
+(defun xiiif-manifest-invalidate-cache (manifest)
+  "Drop memoised canvas data from MANIFEST."
+  (setf (xiiif-manifest-canvas-cache manifest) nil
+        (xiiif-manifest-canvas-index manifest) nil))
 
 (defun xiiif-manifest-title (manifest)
   "Return a short display title for MANIFEST."
@@ -244,6 +269,27 @@ Signals `xiiif-parse-error' if JSON does not look like a manifest."
     (if index
         (format "%d. %s" index lbl)
       lbl)))
+
+(defun xiiif-canvas-filesystem-slug (canvas)
+  "Return a filesystem-safe slug derived from CANVAS.
+Uses the canvas label when available, falling back to the id's last
+path segment.  Non-alphanumeric characters are folded to `_', runs of
+underscores collapsed, and the result trimmed to a reasonable length.
+Always returns a non-empty string (\"canvas\" as last resort)."
+  (let* ((label (and canvas (xiiif-label-string (xiiif-canvas-label canvas))))
+         (id    (and canvas (xiiif-canvas-id canvas)))
+         (source
+          (cond
+           ((and label (not (string-empty-p label))) label)
+           ((and id (not (string-empty-p id)))
+            (car (last (split-string id "/" t))))
+           (t "canvas")))
+         (slug (replace-regexp-in-string "[^[:alnum:]._-]+" "_" source))
+         (slug (replace-regexp-in-string "_+" "_" slug))
+         (slug (replace-regexp-in-string "\\`_+\\|_+\\'" "" slug)))
+    (if (string-empty-p slug)
+        "canvas"
+      (if (> (length slug) 64) (substring slug 0 64) slug))))
 
 (defun xiiif--thumbnail-field-url (thumbnail)
   "Return a URL string from a IIIF `thumbnail' field THUMBNAIL or nil.
@@ -451,10 +497,18 @@ Walks direct canvas ids first, then recurses into sub-ranges in order."
                (xiiif-range-sub-ranges range))))
 
 (defun xiiif-manifest-find-canvas (manifest canvas-id)
-  "Return the `xiiif-canvas' in MANIFEST whose id is CANVAS-ID, or nil."
-  (and canvas-id
-       (cl-find canvas-id (xiiif-manifest-canvases manifest)
-                :key #'xiiif-canvas-id :test #'equal)))
+  "Return the `xiiif-canvas' in MANIFEST whose id is CANVAS-ID, or nil.
+Builds a hash-table index on first use so repeated lookups (notably
+from the structures navigator) stay O(1)."
+  (when canvas-id
+    (let ((index (xiiif-manifest-canvas-index manifest)))
+      (unless index
+        (setq index (make-hash-table :test 'equal))
+        (dolist (c (xiiif-manifest-canvases manifest))
+          (when (xiiif-canvas-id c)
+            (puthash (xiiif-canvas-id c) c index)))
+        (setf (xiiif-manifest-canvas-index manifest) index))
+      (gethash canvas-id index))))
 
 
 ;;; ---------- resource detection ----------

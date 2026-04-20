@@ -16,6 +16,7 @@
 ;;; Code:
 
 (require 'cl-lib)
+(require 'url-util)
 
 (defgroup xiiif-sources nil
   "Registry of named IIIF endpoints."
@@ -45,6 +46,11 @@ Each entry is a cons (NAME . PLIST).  Supported plist keys:
   :label        Display string shown in `xiiif-open-source'.
   :prompt       Prompt string for the identifier (optional).
   :manifest-url A `format' string with a single %s placeholder for the id.
+                URL-encoding of the id itself is opt-in via
+                `:encode-id'.
+  :encode-id    When non-nil, pass the id through `url-hexify-string'
+                before substitution.  Off by default so ARK-style
+                ids with literal slashes keep working.
   :manifest-url-fn A function of the id returning a URL, used when
                 set; takes precedence over `:manifest-url'.
   :notes        Free text shown next to the label (optional)."
@@ -66,15 +72,26 @@ Each entry is a cons (NAME . PLIST).  Supported plist keys:
   "Return the display label for SOURCE (a plist)."
   (or (plist-get source :label) "(unnamed)"))
 
+(defun xiiif-source--prepare-id (source id)
+  "Return the substitution value for ID according to SOURCE.
+Passes ID through `url-hexify-string' when SOURCE declares
+`:encode-id'; otherwise returns ID as-is."
+  (if (plist-get source :encode-id)
+      (url-hexify-string id)
+    id))
+
 (defun xiiif-source-build-manifest-url (source id)
   "Return the manifest URL for ID using SOURCE.
 Prefers `:manifest-url-fn' over `:manifest-url' when both are set.
-Signals `user-error' when SOURCE defines neither."
+When `:encode-id' is non-nil, ID is URL-hexified before
+substitution; otherwise it is inserted verbatim so that ARK-style
+identifiers with literal slashes keep working.
+Signals `user-error' when SOURCE defines neither builder."
   (let ((fn  (plist-get source :manifest-url-fn))
         (fmt (plist-get source :manifest-url)))
     (cond
      (fn  (funcall fn id))
-     (fmt (format fmt id))
+     (fmt (format fmt (xiiif-source--prepare-id source id)))
      (t (user-error
          "Source %s defines no :manifest-url or :manifest-url-fn"
          (xiiif-source-label source))))))

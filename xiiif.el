@@ -4,7 +4,7 @@
 
 ;; Author: The xiiif authors
 ;; Maintainer: The xiiif authors
-;; Version: 0.1.0
+;; Version: 0.3.0
 ;; Package-Requires: ((emacs "27.1"))
 ;; Homepage: https://github.com/maribakulj/xiiif
 ;; Keywords: hypermedia, multimedia, iiif, digital-humanities
@@ -46,15 +46,21 @@
 (require 'cl-lib)
 (require 'subr-x)
 
+(require 'xiiif-errors)
 (require 'xiiif-profiles)
+(require 'xiiif-http-cache)
 (require 'xiiif-api)
 (require 'xiiif-core)
 (require 'xiiif-cache)
 (require 'xiiif-image)
 (require 'xiiif-annotations)
+(require 'xiiif-ocr)
+(require 'xiiif-sources)
 (require 'xiiif-ui)
 (require 'xiiif-org)
 (require 'xiiif-cite)
+(require 'xiiif-upgrade)
+(require 'xiiif-search)
 
 (defgroup xiiif nil
   "Emacs-native IIIF workbench."
@@ -62,7 +68,7 @@
   :prefix "xiiif-"
   :link '(url-link "https://github.com/maribakulj/xiiif"))
 
-(defconst xiiif-version "0.1.0"
+(defconst xiiif-version "0.3.0"
   "Current version of the xiiif package.")
 
 
@@ -113,18 +119,12 @@ Falls back to `xiiif-current-canvas' when no buffer context applies."
   (or (xiiif--canvas-in-context)
       (user-error "No canvas selected; open one with `xiiif-open-canvas'")))
 
-(defun xiiif--fetch-and-parse (url)
-  "Fetch URL synchronously and return a parsed `xiiif-manifest'.
-Kept as an escape hatch for scripting; interactive commands use
-the asynchronous path via `xiiif--load-manifest-async'."
-  (let ((json (xiiif-api-fetch-json url)))
-    (xiiif-parse-manifest json url)))
-
 (defun xiiif--load-resource-async (url on-manifest on-collection)
   "Fetch URL asynchronously and dispatch to ON-MANIFEST or ON-COLLECTION.
 The right callback is chosen by `xiiif-resource-kind'.  If JSON is
 neither a Manifest nor a Collection, a message is shown and no
-callback is invoked.  Errors are reported via `message'."
+callback is invoked.  Errors are reported via `message'.
+Returns the `xiiif-api-fetch-json-async' handle for cancellation."
   (message "xiiif: fetching %s..." url)
   (xiiif-api-fetch-json-async
    url
@@ -143,6 +143,17 @@ callback is invoked.  Errors are reported via `message'."
        (error
         (message "xiiif: failed to render %s: %s"
                  url (error-message-string err)))))))
+
+(defvar-local xiiif--inflight nil
+  "`xiiif-api' handle of the in-flight request tied to this buffer, or nil.
+Populated by `xiiif-refresh' so a subsequent refresh can cancel the
+previous request.")
+
+(defun xiiif--cancel-inflight ()
+  "Cancel the request tracked by `xiiif--inflight' in the current buffer."
+  (when xiiif--inflight
+    (xiiif-api-cancel xiiif--inflight)
+    (setq xiiif--inflight nil)))
 
 
 ;;; ---------- user-facing commands ----------
@@ -164,7 +175,7 @@ the appropriate buffer."
      (xiiif-cache-set-canvas nil)
      (xiiif-ui-render-manifest manifest)
      (run-hook-with-args 'xiiif-after-load-manifest-hook manifest)
-     (let ((n (length (xiiif-manifest-canvases manifest))))
+     (let ((n (xiiif-manifest-canvas-count manifest)))
        (message "xiiif: loaded %s (%d canvas%s)"
                 (xiiif-manifest-title manifest)
                 n (if (= 1 n) "" "es"))))
@@ -251,7 +262,10 @@ quality and format instead of using defaults."
 SIZE and FORMAT override the defaults from `xiiif-image-default-size'
 and `xiiif-image-default-format'.  Files are named
 \"<INDEX>-<SLUG>.<FORMAT>\" where SLUG is derived from the canvas
-label.  Canvases without an image service are skipped silently."
+label.  Canvases without an image service are skipped silently.
+
+Downloads run asynchronously one at a time so Emacs stays responsive;
+a progress reporter advances as each file arrives."
   (interactive
    (progn
      (unless (derived-mode-p 'xiiif-canvas-list-mode)
@@ -269,40 +283,112 @@ label.  Canvases without an image service are skipped silently."
       (user-error "No canvases marked (press m or t on rows first)"))
     (let ((dir (expand-file-name directory)))
       (unless (file-directory-p dir) (make-directory dir t))
-      (let ((progress (make-progress-reporter
-                       (format "xiiif: downloading %d canvas%s"
-                               (length marked)
-                               (if (= 1 (length marked)) "" "es"))
-                       0 (length marked)))
-            (saved 0)
-            (skipped 0))
-        (cl-loop
-         for canvas in marked
-         for index from 1
-         do
-         (if (not (xiiif-canvas-image-service canvas))
-             (cl-incf skipped)
-           (let ((dest (expand-file-name
-                        (format "%03d-%s.%s"
-                                index
-                                (xiiif-canvas-filesystem-slug canvas)
-                                format)
-                        dir)))
-             (condition-case err
-                 (progn
-                   (xiiif-image-download canvas dest :size size :format format)
-                   (cl-incf saved))
-               (error
-                (message "xiiif: skipped %s (%s)"
-                         (xiiif-canvas-title canvas)
-                         (error-message-string err))
-                (cl-incf skipped))))
-           (progress-reporter-update progress index)))
-        (progress-reporter-done progress)
-        (message "xiiif: saved %d canvas%s to %s%s"
-                 saved (if (= 1 saved) "" "es") dir
-                 (if (> skipped 0)
-                     (format " (%d skipped)" skipped) ""))))))
+      (xiiif--download-queue-run marked dir size format))))
+
+(defun xiiif--download-queue-run (canvases dir size format)
+  "Download CANVASES to DIR asynchronously, one at a time.
+SIZE and FORMAT are forwarded to `xiiif-image-download-async'.
+Canvases without an image service are counted as skipped."
+  (let* ((total    (length canvases))
+         (progress (make-progress-reporter
+                    (format "xiiif: downloading %d canvas%s"
+                            total (if (= 1 total) "" "es"))
+                    0 total))
+         (state    (list :saved 0 :skipped 0 :index 0)))
+    (cl-labels
+        ((finish ()
+           (progress-reporter-done progress)
+           (let ((saved   (plist-get state :saved))
+                 (skipped (plist-get state :skipped)))
+             (message "xiiif: saved %d canvas%s to %s%s"
+                      saved (if (= 1 saved) "" "es") dir
+                      (if (> skipped 0)
+                          (format " (%d skipped)" skipped) ""))))
+         (advance ()
+           (let ((i (plist-get state :index)))
+             (progress-reporter-update progress i)
+             (if (>= i total)
+                 (finish)
+               (step))))
+         (bump (key)
+           (plist-put state key (1+ (plist-get state key))))
+         (step ()
+           (let* ((i (plist-get state :index))
+                  (canvas (nth i canvases)))
+             (plist-put state :index (1+ i))
+             (if (not (xiiif-canvas-image-service canvas))
+                 (progn (bump :skipped) (advance))
+               (let ((dest (expand-file-name
+                            (format "%03d-%s.%s"
+                                    (1+ i)
+                                    (xiiif-canvas-filesystem-slug canvas)
+                                    format)
+                            dir)))
+                 (xiiif-image-download-async
+                  canvas dest
+                  (lambda (_path)
+                    (bump :saved) (advance))
+                  :errback
+                  (lambda (err)
+                    (message "xiiif: skipped %s (%s)"
+                             (xiiif-canvas-title canvas)
+                             (xiiif-api-error-hint err))
+                    (bump :skipped) (advance))
+                  :size size :format format))))))
+      (if (zerop total) (finish) (step)))))
+
+;;;###autoload
+(defun xiiif-show-ocr (&optional canvas ref)
+  "Fetch and display an OCR/ALTO/hOCR sidecar for the contextual canvas.
+When the canvas exposes more than one OCR ref, prompts to pick one.
+CANVAS and REF are passed explicitly when invoked non-interactively
+by `xiiif-ui--ocr-refresh'."
+  (interactive)
+  (let* ((c (or canvas (xiiif--require-canvas)))
+         (refs (xiiif-canvas-ocr-refs c)))
+    (unless refs
+      (user-error "No OCR (ALTO/hOCR/text) seeAlso on this canvas"))
+    (let ((chosen
+           (or ref
+               (if (= 1 (length refs))
+                   (car refs)
+                 (let* ((table (mapcar
+                                (lambda (r)
+                                  (cons (format "[%s] %s"
+                                                (plist-get r :format)
+                                                (or (plist-get r :label)
+                                                    (plist-get r :url)))
+                                        r))
+                                refs))
+                        (pick (completing-read "OCR source: "
+                                               (mapcar #'car table)
+                                               nil t)))
+                   (cdr (assoc pick table)))))))
+      (message "xiiif: fetching OCR...")
+      (xiiif-ocr-fetch-async
+       chosen
+       (lambda (enriched)
+         (xiiif-ui-render-ocr c enriched)
+         (message "xiiif: OCR (%s) for %s"
+                  (plist-get enriched :format)
+                  (xiiif-canvas-title c)))))))
+
+;;;###autoload
+(defun xiiif-show-annotations ()
+  "Fetch and display non-painting annotations for the contextual canvas.
+Inline AnnotationPages are rendered immediately; external references
+are resolved asynchronously and merged in document order."
+  (interactive)
+  (let ((canvas (xiiif--require-canvas)))
+    (message "xiiif: collecting annotations...")
+    (xiiif-annotations-collect
+     canvas
+     (lambda (annotations)
+       (xiiif-ui-render-annotations canvas annotations)
+       (message "xiiif: %d annotation%s on %s"
+                (length annotations)
+                (if (= 1 (length annotations)) "" "s")
+                (xiiif-canvas-title canvas))))))
 
 ;;;###autoload
 (defun xiiif-show-info-json (&optional target)
@@ -420,15 +506,21 @@ Signals `user-error' if there is nothing to refresh."
 (defun xiiif-refresh ()
   "Re-fetch the current resource asynchronously and redisplay.
 Works for the manifest overview, the canvas browser, the canvas
-detail buffer (re-resolved by id) and the collection browser."
+detail buffer (re-resolved by id) and the collection browser.
+A pending refresh on the same buffer is cancelled first so rapid
+presses do not race."
   (interactive)
   (pcase-let* ((`(,url . ,mode) (xiiif--refresh-source))
                (canvas-id (and (eq mode 'xiiif-canvas-mode)
                                xiiif-ui--canvas
-                               (xiiif-canvas-id xiiif-ui--canvas))))
+                               (xiiif-canvas-id xiiif-ui--canvas)))
+               (origin (current-buffer)))
     (unless url
       (user-error "Current resource has no URL to refresh"))
-    (xiiif--load-resource-async
+    (when (buffer-live-p origin)
+      (with-current-buffer origin (xiiif--cancel-inflight)))
+    (setq xiiif--inflight
+          (xiiif--load-resource-async
      url
      (lambda (fresh)
        (xiiif-cache-set-manifest fresh)
@@ -436,9 +528,7 @@ detail buffer (re-resolved by id) and the collection browser."
         ((eq mode 'xiiif-canvas-list-mode)
          (xiiif-ui-render-canvases fresh))
         ((eq mode 'xiiif-canvas-mode)
-         (let ((match (and canvas-id
-                           (cl-find canvas-id (xiiif-manifest-canvases fresh)
-                                    :key #'xiiif-canvas-id :test #'equal))))
+         (let ((match (xiiif-manifest-find-canvas fresh canvas-id)))
            (if match
                (progn (xiiif-cache-set-canvas match)
                       (xiiif-ui-render-canvas match))
@@ -454,7 +544,7 @@ detail buffer (re-resolved by id) and the collection browser."
        (xiiif-cache-set-collection fresh)
        (xiiif-ui-render-collection fresh)
        (run-hook-with-args 'xiiif-after-load-collection-hook fresh)
-       (message "xiiif: refreshed %s" (xiiif-collection-title fresh))))))
+       (message "xiiif: refreshed %s" (xiiif-collection-title fresh)))))))
 
 ;;;###autoload
 (defun xiiif-open-recent ()
@@ -492,6 +582,29 @@ cleared before the retry, so a second failure is reported fresh."
       (user-error "Last error has no URL to retry"))
     (setq xiiif-api-last-error nil)
     (xiiif-open-manifest url)))
+
+(defcustom xiiif-mirador-base-url
+  "https://projectmirador.org/embed/"
+  "Base URL of the Mirador viewer used by `xiiif-open-in-mirador'.
+The manifest URL is appended as `?iiif-content=<encoded manifest url>'."
+  :type 'string
+  :group 'xiiif)
+
+;;;###autoload
+(defun xiiif-open-in-mirador ()
+  "Open the current manifest in an external Mirador viewer.
+Uses `browse-url' so Emacs's configured external browser is
+respected.  Signals `user-error' when no manifest is loaded."
+  (interactive)
+  (let* ((m (xiiif--require-manifest))
+         (url (or (xiiif-manifest-url m)
+                  (xiiif-manifest-id m)
+                  (user-error "Current manifest has no URL"))))
+    (browse-url
+     (format "%s?iiif-content=%s"
+             (string-trim-right xiiif-mirador-base-url "?&")
+             (url-hexify-string url)))
+    (message "xiiif: opening %s in Mirador" (xiiif-manifest-title m))))
 
 ;;;###autoload
 (defun xiiif-export-citation (&optional format)

@@ -116,11 +116,14 @@ Returns nil when SERVICE has no derivable base URL."
           (or format xiiif-image-default-format)))
 
 (defun xiiif-image-download (service destination &rest params)
-  "Download a derivative from SERVICE to DESTINATION.
+  "Download a derivative from SERVICE to DESTINATION synchronously.
 
 PARAMS are forwarded to `xiiif-image-url' as keyword arguments.
 Creates the destination directory if it does not exist.  Returns
-the absolute path of the downloaded file."
+the absolute path of the downloaded file.
+
+Blocks Emacs; interactive commands should prefer
+`xiiif-image-download-async'."
   (let ((url (apply #'xiiif-image-url service params)))
     (unless url
       (signal 'xiiif-error (list "no image service")))
@@ -128,6 +131,29 @@ the absolute path of the downloaded file."
       (when (and dir (not (file-directory-p dir)))
         (make-directory dir t)))
     (xiiif-api-download-file url (expand-file-name destination))))
+
+(cl-defun xiiif-image-download-async (service destination callback
+                                              &key errback
+                                              region size rotation
+                                              quality format)
+  "Download a derivative from SERVICE to DESTINATION asynchronously.
+
+CALLBACK receives the absolute path on success.  ERRBACK (or the
+default xiiif reporter) receives (ERROR-SYMBOL URL &rest DATA) on
+failure.  Keyword arguments override the Image API defaults in the
+same way as `xiiif-image-url'."
+  (let ((url (xiiif-image-url service
+                              :region region :size size
+                              :rotation rotation :quality quality
+                              :format format)))
+    (if (not url)
+        (funcall (or errback #'xiiif-api--default-errback)
+                 (list 'xiiif-error nil "no image service"))
+      (xiiif-api-download-file-async
+       url
+       (expand-file-name destination)
+       callback
+       errback))))
 
 
 

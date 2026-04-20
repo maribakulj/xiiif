@@ -22,12 +22,9 @@
 (require 'json)
 (require 'url)
 (require 'url-http)
+(require 'xiiif-errors)
 (require 'xiiif-profiles)
-
-(define-error 'xiiif-error "xiiif error")
-(define-error 'xiiif-network-error "xiiif network error" 'xiiif-error)
-(define-error 'xiiif-http-error    "xiiif HTTP error"    'xiiif-error)
-(define-error 'xiiif-parse-error   "xiiif JSON parse error" 'xiiif-error)
+(require 'xiiif-http-cache)
 
 (defcustom xiiif-api-timeout 30
   "Timeout in seconds for synchronous IIIF HTTP requests."
@@ -35,15 +32,18 @@
   :group 'xiiif)
 
 (defcustom xiiif-api-user-agent
-  (format "xiiif.el/0.1.0 Emacs/%s" emacs-version)
+  (format "xiiif.el/0.3.0 Emacs/%s" emacs-version)
   "User-Agent string used for IIIF HTTP requests."
   :type 'string
   :group 'xiiif)
 
 (defun xiiif-api--valid-url-p (url)
-  "Return non-nil if URL looks like an http(s) URL."
+  "Return non-nil if URL looks like a supported URL.
+Accepts http(s):// and file:// schemes.  file:// URLs are mostly
+useful for reading local IIIF fixtures during development; downloads
+through `url-copy-file' also honour them."
   (and (stringp url)
-       (string-match-p "\\`https?://[^[:space:]]+\\'" url)))
+       (string-match-p "\\`\\(?:https?\\|file\\)://[^[:space:]]+\\'" url)))
 
 (defun xiiif-api--status-code ()
   "Parse the HTTP status code from the current `url' response buffer.
@@ -77,23 +77,84 @@ Point must be at the beginning of the buffer.  Returns an integer or nil."
      (signal 'xiiif-parse-error
              (list url (error-message-string err))))))
 
+(defun xiiif-api--content-type ()
+  "Return the Content-Type header value of the current response buffer, or nil."
+  (save-excursion
+    (goto-char (point-min))
+    (when (re-search-forward
+           "^Content-Type:[ \t]*\\([^\r\n;]+\\)" nil t)
+      (downcase (string-trim (match-string 1))))))
+
+(defun xiiif-api--header-value (name)
+  "Return the value of response header NAME in the current buffer, or nil."
+  (save-excursion
+    (goto-char (point-min))
+    (when (re-search-forward
+           (format "^%s:[ \t]*\\(.*?\\)[ \t]*\r?$"
+                   (regexp-quote name))
+           nil t)
+      (match-string 1))))
+
+(defun xiiif-api--warn-content-type (url ct)
+  "Emit a lazy warning when CT is present and does not look like JSON."
+  (when (and ct (not (string-match-p
+                       "\\(?:application/ld\\+json\\|application/json\\|\\+json\\)"
+                       ct)))
+    (display-warning
+     'xiiif
+     (format "Unexpected Content-Type %S from %s (parsing as JSON anyway)"
+             ct url)
+     :warning)))
+
 (defun xiiif-api--response-json (url)
   "Parse the current `url' response buffer as IIIF JSON for URL.
-Signals `xiiif-http-error' on non-2xx responses and
-`xiiif-parse-error' on invalid JSON."
-  (let ((status (xiiif-api--status-code)))
-    (when (and status (or (< status 200) (>= status 400)))
+Signals `xiiif-http-error' on non-4xx/5xx responses (other than
+304, which is served from the on-disk cache) and `xiiif-parse-error'
+on invalid JSON.  A mismatching Content-Type triggers a lazy
+`display-warning' but is not treated as an error.  On 2xx responses
+that carry an `ETag' or `Last-Modified' validator, the decoded body
+is persisted via `xiiif-http-cache-store' for future conditional
+fetches."
+  (let ((status (xiiif-api--status-code))
+        (ct     (xiiif-api--content-type)))
+    (cond
+     ((eql status 304)
+      (let ((entry (xiiif-http-cache-lookup url)))
+        (unless entry
+          (signal 'xiiif-http-error
+                  (list url 304 "304 without cache entry")))
+        (xiiif-api--parse-json (plist-get entry :body) url)))
+     ((and status (or (< status 200) (>= status 400)))
       (signal 'xiiif-http-error (list url status)))
-    (xiiif-api--parse-json (xiiif-api--decode-body) url)))
+     (t
+      (xiiif-api--warn-content-type url ct)
+      (let ((body (xiiif-api--decode-body))
+            (etag (xiiif-api--header-value "ETag"))
+            (lm   (xiiif-api--header-value "Last-Modified")))
+        (when (or etag lm)
+          (xiiif-http-cache-store url body etag lm))
+        (xiiif-api--parse-json body url))))))
 
 (defun xiiif-api--request-headers (&optional url)
   "Return the HTTP request header alist used by every xiiif call.
-When URL matches an entry in `xiiif-server-profiles', any headers
-declared by that profile are appended."
-  (append
-   `(("Accept"     . "application/ld+json, application/json")
-     ("User-Agent" . ,xiiif-api-user-agent))
-   (xiiif-profile-headers url)))
+When URL matches an entry in `xiiif-server-profiles', any explicit
+`:headers' are appended and, if the profile declares `:auth', an
+`Authorization' header is resolved via `auth-source' and appended
+last (so an explicit `:headers' entry still wins for the same
+header name).  Conditional cache validators
+(`If-None-Match' / `If-Modified-Since') are appended when a cached
+entry exists for URL."
+  (let* ((base
+          `(("Accept"     . "application/ld+json, application/json")
+            ("User-Agent" . ,xiiif-api-user-agent)))
+         (profile-headers (xiiif-profile-headers url))
+         (auth (unless (assoc-string "Authorization" profile-headers t)
+                 (xiiif-profile-auth-header url)))
+         (conditional (and url (xiiif-http-cache-conditional-headers url))))
+    (append base
+            profile-headers
+            (and auth (list auth))
+            conditional)))
 
 (defun xiiif-api-fetch-json (url)
   "Fetch URL synchronously and return parsed JSON.
@@ -167,12 +228,16 @@ On success, CALLBACK is called with the parsed JSON value.
 On failure, ERRBACK is called with a list (ERROR-SYMBOL URL &rest DATA);
 when ERRBACK is nil, `xiiif-api--default-errback' shows a message.
 
-Returns immediately; the HTTP request runs in the background.  Both
-CALLBACK and ERRBACK run on Emacs's main thread, so they may update
-buffers and UI directly."
+Returns the `url-retrieve' response buffer (a cancellable handle)
+or nil when the URL was invalid.  Both CALLBACK and ERRBACK run on
+Emacs's main thread, so they may update buffers and UI directly.
+To cancel an in-flight request, pass the returned handle to
+`xiiif-api-cancel'."
   (let ((errback (or errback #'xiiif-api--default-errback)))
     (if (not (xiiif-api--valid-url-p url))
-        (funcall errback (list 'xiiif-network-error url "invalid URL"))
+        (progn
+          (funcall errback (list 'xiiif-network-error url "invalid URL"))
+          nil)
       (let ((url-request-extra-headers (xiiif-api--request-headers url))
             (url-mime-accept-string
              "application/ld+json, application/json"))
@@ -202,7 +267,19 @@ buffers and UI directly."
           (error
            (funcall errback
                     (list 'xiiif-network-error url
-                          (error-message-string err)))))))))
+                          (error-message-string err)))
+           nil))))))
+
+(defun xiiif-api-cancel (handle)
+  "Cancel an in-flight request referenced by HANDLE.
+HANDLE is the buffer returned by `xiiif-api-fetch-json-async' or
+`xiiif-api-fetch-bytes-async'.  Killing the buffer tears down the
+underlying process, which aborts the sentinel and therefore the
+callback chain.  Safe to call with nil or a dead buffer."
+  (when (buffer-live-p handle)
+    (let ((proc (get-buffer-process handle)))
+      (when proc (delete-process proc)))
+    (kill-buffer handle)))
 
 (defun xiiif-api-fetch-bytes-async (url callback &optional errback)
   "Fetch URL asynchronously and pass the raw body to CALLBACK.
@@ -248,10 +325,13 @@ shape used by `xiiif-api-fetch-json-async'."
                         (error-message-string err))))))))
 
 (defun xiiif-api-download-file (url destination)
-  "Download URL to DESTINATION, overwriting if it exists.
+  "Download URL to DESTINATION synchronously, overwriting if it exists.
 Any headers declared by a matching `xiiif-server-profiles' entry
 are applied to the request.  Returns DESTINATION on success or
-signals an `xiiif-network-error'."
+signals an `xiiif-network-error'.
+
+Kept for scripting; interactive commands should use
+`xiiif-api-download-file-async' to avoid blocking Emacs."
   (unless (xiiif-api--valid-url-p url)
     (signal 'xiiif-network-error (list url "invalid URL")))
   (let ((url-request-extra-headers (xiiif-api--request-headers url)))
@@ -262,6 +342,37 @@ signals an `xiiif-network-error'."
       (error
        (signal 'xiiif-network-error
                (list url (error-message-string err)))))))
+
+(defun xiiif-api-download-file-async (url destination callback &optional errback)
+  "Download URL to DESTINATION asynchronously.
+
+On success, CALLBACK is called with the absolute path of the saved
+file.  On failure, ERRBACK (or the default reporter) is called with
+the same (ERROR-SYMBOL URL &rest DATA) shape used by
+`xiiif-api-fetch-json-async'.
+
+Parent directories of DESTINATION are created if missing.  Any
+headers declared by a matching `xiiif-server-profiles' entry are
+applied to the request."
+  (let* ((errback (or errback #'xiiif-api--default-errback))
+         (dest    (expand-file-name destination))
+         (dir     (file-name-directory dest)))
+    (when (and dir (not (file-directory-p dir)))
+      (make-directory dir t))
+    (xiiif-api-fetch-bytes-async
+     url
+     (lambda (bytes)
+       (condition-case err
+           (let ((coding-system-for-write 'binary))
+             (with-temp-file dest
+               (set-buffer-multibyte nil)
+               (insert bytes))
+             (funcall callback dest))
+         (error
+          (funcall errback
+                   (list 'xiiif-error url
+                         (error-message-string err))))))
+     errback)))
 
 (provide 'xiiif-api)
 ;;; xiiif-api.el ends here

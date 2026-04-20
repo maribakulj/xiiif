@@ -142,5 +142,31 @@ FORMAT is `alto', `hocr' or anything else (returned verbatim)."
     ('hocr (xiiif-ocr--extract-hocr body))
     (_ body)))
 
+
+;;; ---------- async fetch + extract ----------
+
+(defun xiiif-ocr-fetch-async (ref callback &optional errback)
+  "Fetch an OCR REF asynchronously and call CALLBACK with extracted text.
+
+REF is one of the plists returned by `xiiif-canvas-ocr-refs';
+CALLBACK receives the plist augmented with `:text' (the decoded,
+extracted string) and `:body' (the raw fetched body).  On failure,
+ERRBACK receives (ERROR-SYMBOL URL &rest DATA) using the same shape
+as the rest of `xiiif-api'."
+  (let ((url (plist-get ref :url))
+        (format (plist-get ref :format)))
+    (xiiif-api-fetch-bytes-async
+     url
+     (lambda (bytes)
+       (let* ((body (if (multibyte-string-p bytes)
+                        bytes
+                      (decode-coding-string bytes 'utf-8 t)))
+              (text (if xiiif-ocr-extract-text
+                        (xiiif-ocr-extract-text body format)
+                      body)))
+         (funcall callback
+                  (append ref (list :body body :text text)))))
+     errback)))
+
 (provide 'xiiif-ocr)
 ;;; xiiif-ocr.el ends here

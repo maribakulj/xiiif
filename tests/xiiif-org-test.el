@@ -74,5 +74,22 @@
              ":canvas-id: https://example.org/iiif/book1/canvas/p1"
              text))))
 
+;;; ---- emit on read-only buffer ----
+
+(ert-deftest xiiif-org--emit/read-only-buffer-goes-to-kill-ring ()
+  (let ((kill-ring nil))
+    (with-temp-buffer
+      (setq buffer-read-only t)
+      (let ((buf-before (buffer-string)))
+        (xiiif-org--emit "copied-link")
+        (should (equal buf-before (buffer-string)))
+        (should (equal "copied-link" (car kill-ring)))))))
+
+(ert-deftest xiiif-org--emit/writable-buffer-inserts ()
+  (with-temp-buffer
+    (xiiif-org--emit "inserted-link")
+    (should (equal "inserted-link" (buffer-string)))))
+
+
 (provide 'xiiif-org-test)
 ;;; xiiif-org-test.el ends here

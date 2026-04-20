@@ -75,14 +75,14 @@ Typical use cases:
 
 ## Status
 
-| Field           | Value                                                       |
-| --------------- | ----------------------------------------------------------- |
-| Version         | `0.1.0`                                                     |
-| Stability       | MVP — APIs may change while the package stabilizes          |
-| Emacs           | 27.1 or newer                                               |
-| Built on        | `url.el`, `json.el`, `tabulated-list`, `cl-lib`             |
-| External deps   | none                                                        |
-| License         | GPL-3.0-or-later                                            |
+| Field           | Value                                                        |
+| --------------- | ------------------------------------------------------------ |
+| Version         | `0.3.0`                                                      |
+| Stability       | Feature-complete for 0.3; APIs may still shift before 1.0    |
+| Emacs           | 27.1 or newer                                                |
+| Built on        | `url.el`, `json.el`, `tabulated-list`, `cl-lib`, `auth-source` (for `:auth` profiles) |
+| External deps   | none                                                         |
+| License         | GPL-3.0-or-later                                             |
 
 ## Installation
 
@@ -158,6 +158,10 @@ All commands are autoloaded.
 | `xiiif-download-marked`     | Bulk-download every marked canvas in the browser to a directory. |
 | `xiiif-show-info-json`      | Fetch and display the Image API `info.json` for a canvas.        |
 | `xiiif-show-structures`     | Open the structural navigator (Ranges) for the current manifest. |
+| `xiiif-show-annotations`    | Fetch and display non-painting annotations for the current canvas. |
+| `xiiif-show-ocr`            | Fetch and display an ALTO/hOCR/plain-text OCR sidecar.           |
+| `xiiif-search`              | Query the current manifest's IIIF Search 1.0 service.            |
+| `xiiif-open-in-mirador`     | Open the current manifest in an external Mirador viewer.         |
 | `xiiif-insert-org-link`     | Insert a manifest, canvas, image link, or metadata block.        |
 | `xiiif-export-citation`     | Export the manifest as BibTeX or CSL-JSON (insert or kill-ring). |
 
@@ -172,6 +176,9 @@ All commands are autoloaded.
 | `xiiif-retry-last`          | Re-issue the most recent failed fetch.                           |
 | `xiiif-toggle-thumbnails`   | Enable or disable inline canvas-thumbnail previews.              |
 | `xiiif-cache-clear`         | Drop in-memory state (does not touch the history file).          |
+| `xiiif-cache-clear-http`    | Wipe the on-disk HTTP response cache.                            |
+| `xiiif-upgrade-manifest`    | Return a canonical v3-shaped alist from a v2/v3 manifest JSON.   |
+| `xiiif-upgrade-collection`  | Return a canonical v3-shaped alist from a v2/v3 collection JSON. |
 
 ## Buffers and keymaps
 
@@ -186,6 +193,9 @@ share a vocabulary of keys.
 | `*XIIIF Collection*`   | `xiiif-collection-mode`    | `tabulated-list-mode`  |
 | `*XIIIF Image Info*`   | `xiiif-info-mode`          | `special-mode`         |
 | `*XIIIF Structures*`   | `xiiif-structures-mode`    | `special-mode`         |
+| `*XIIIF Annotations*`  | `xiiif-annotations-mode`   | `special-mode`         |
+| `*XIIIF OCR*`          | `xiiif-ocr-mode`           | `special-mode`         |
+| `*XIIIF Search*`       | `xiiif-search-mode`        | `tabulated-list-mode`  |
 
 Common bindings:
 
@@ -200,6 +210,7 @@ Common bindings:
 | `i`   | Insert an Org link (or copy to kill-ring in read-only buffers) |
 | `I`   | Fetch and display the image service `info.json` (canvas detail)|
 | `a`   | Fetch and display annotations for the canvas (canvas detail)   |
+| `O`   | Fetch and display an OCR/ALTO/hOCR sidecar (canvas detail)     |
 | `J`   | Show raw JSON                                                  |
 | `g`   | Refresh                                                        |
 | `q`   | `quit-window`                                                  |
@@ -410,28 +421,41 @@ v2-style `sc:` type prefixes are stripped on the way in.
 
 ```
 xiiif/
-  xiiif.el          ; package entry, public commands, dispatch
-  xiiif-api.el      ; sync + async HTTP, JSON parse, typed errors
-  xiiif-core.el     ; data model, tolerant v2/v3 parser
-  xiiif-cache.el    ; in-memory state + persisted recent list
-  xiiif-image.el    ; IIIF Image API URL builder, download
-  xiiif-ui.el       ; major modes & buffers
-  xiiif-org.el      ; Org link / metadata insertion
-  xiiif-cite.el     ; BibTeX / CSL-JSON export
-  tests/            ; ERT tests
-  examples/         ; sample manifest + collection fixtures
+  xiiif.el            ; package entry, public commands, dispatch
+  xiiif-errors.el     ; shared define-error symbols
+  xiiif-api.el        ; sync + async HTTP, JSON parse, typed errors
+  xiiif-http-cache.el ; on-disk ETag / Last-Modified cache
+  xiiif-core.el       ; data model, tolerant v2/v3 parser
+  xiiif-cache.el      ; in-memory state + persisted recent list
+  xiiif-image.el      ; IIIF Image API URL builder, download
+  xiiif-annotations.el; non-painting annotations fetch + parse
+  xiiif-ocr.el        ; ALTO / hOCR / text sidecar fetch + extract
+  xiiif-profiles.el   ; per-host HTTP/Image profiles
+  xiiif-sources.el    ; named IIIF endpoint registry
+  xiiif-upgrade.el    ; v2 -> v3 manifest/collection normalisation
+  xiiif-search.el     ; IIIF Search API 1.0 client
+  xiiif-ui.el         ; major modes & buffers
+  xiiif-org.el        ; Org link / metadata insertion
+  xiiif-cite.el       ; BibTeX / CSL-JSON export
+  tests/              ; ERT tests
+  examples/           ; sample manifest + collection fixtures
 ```
 
 | Module          | Responsibility                                                      |
 | --------------- | ------------------------------------------------------------------- |
-| `xiiif`         | Autoloaded user commands; dispatches between manifest and collection. |
-| `xiiif-api`     | `xiiif-api-fetch-json` (sync) and `xiiif-api-fetch-json-async`. Defines `xiiif-network-error`, `xiiif-http-error`, `xiiif-parse-error`. |
-| `xiiif-core`    | `cl-defstruct` types, `xiiif-parse-manifest`, `xiiif-parse-collection`, `xiiif-manifest-structures`, `xiiif-resource-kind`, `xiiif-label-string`, `xiiif-metadata-pairs`. |
-| `xiiif-cache`   | Current manifest / canvas / collection; recent URL ring; tiny on-disk persistence. |
-| `xiiif-image`   | `xiiif-image-url`, `xiiif-image-info-url`, `xiiif-image-download`, `xiiif-image-fetch-info`, `xiiif-image-fetch-info-async`, and the `xiiif-image-info` parser. |
-| `xiiif-ui`      | Six derived modes; renders all xiiif buffers. |
-| `xiiif-org`     | `xiiif-org-insert-*` and the underlying link / metadata-block helpers. |
-| `xiiif-cite`    | `xiiif-citation-metadata`, `xiiif-citation-bibtex`, `xiiif-citation-csl-json`. |
+| `xiiif`             | Autoloaded user commands; dispatches between manifest and collection; drives the bulk-download queue and refresh cancellation. |
+| `xiiif-errors`      | `define-error' symbols (`xiiif-error`, `xiiif-network-error`, `xiiif-http-error`, `xiiif-parse-error`) shared by every layer. |
+| `xiiif-api`         | Sync + async HTTP, JSON parse, cancellable handles, auth-source-aware request headers. |
+| `xiiif-core`        | `cl-defstruct' types, the tolerant v2/v3 parser, canvas memoisation and `xiiif-manifest-find-canvas' hash index. |
+| `xiiif-cache`       | `xiiif-cache-select' unified selector, recent URL ring, debounced safe persistence. |
+| `xiiif-image`       | `xiiif-image-url', `xiiif-image-download-async', `xiiif-image-fetch-info-async', the `info.json' parser. |
+| `xiiif-annotations` | Fetch + parse non-painting annotations; orchestrates inline + external pages via `xiiif-annotations-collect'. |
+| `xiiif-ocr`         | ALTO / hOCR / plain-text sidecar fetch + extraction. |
+| `xiiif-profiles`    | Per-host regexp-matched profiles: HTTP headers, Image API defaults, `auth-source' bearer lookup. |
+| `xiiif-sources`     | Named IIIF endpoint registry with optional URL-encoded identifier substitution. |
+| `xiiif-ui`          | Eight derived modes; renders every xiiif buffer. |
+| `xiiif-org`         | `xiiif-org-insert-*' and `org-capture' helpers. |
+| `xiiif-cite`        | `xiiif-citation-metadata', `xiiif-citation-bibtex', `xiiif-citation-csl-json'. |
 
 ## Customization
 
@@ -470,10 +494,52 @@ All options live under the `xiiif` group (`M-x customize-group RET xiiif`).
 
 ### Recents
 
-| Option                | Default                              |
-| --------------------- | ------------------------------------ |
-| `xiiif-history-file`  | `~/.emacs.d/xiiif-history.el`        |
-| `xiiif-history-size`  | `25`                                 |
+| Option                           | Default                          |
+| -------------------------------- | -------------------------------- |
+| `xiiif-history-file`             | `~/.emacs.d/xiiif-history.el`    |
+| `xiiif-history-size`             | `25`                             |
+| `xiiif-history-save-debounce`    | `2.0` seconds idle               |
+
+The history file is read with `read' and whitelisted by shape, so a
+tampered file cannot execute arbitrary code.  Rapid navigation is
+coalesced into one write via an idle timer; `kill-emacs-hook' flushes
+any pending save before Emacs exits.  Set the debounce to `0` for
+pre-0.2 immediate-write behaviour.
+
+### Per-server profiles
+
+`xiiif-server-profiles' is an alist of `(URL-REGEXP . PLIST)`
+entries.  The first regexp to match a request URL wins.
+
+```elisp
+(setq xiiif-server-profiles
+      '(("\\`https://auth\\.example\\.org"
+         :label "My institutional IIIF"
+         :auth  (:scheme "Bearer")          ; token from auth-source
+         :image (:size "!2048,2048" :format "png"))))
+```
+
+Supported plist keys:
+
+- `:headers` — alist of `(NAME . VALUE)` appended to every matching request.
+- `:auth` — plist instructing xiiif to resolve an `Authorization`
+  header from `auth-source` at request time (preferred over
+  embedding secrets in `:headers`).  Accepts `:host` (defaults to
+  the matched URL host), `:user`, and `:scheme` (defaults to
+  `"Bearer"`).  Explicit `:headers` with the same name still win.
+- `:image` — Image API overrides (`:region`, `:size`, `:rotation`,
+  `:quality`, `:format`) that sit between the caller's explicit
+  arguments and the global `xiiif-image-default-*' customs.
+- `:notes` — free text shown next to the label in diagnostics.
+
+### Named sources
+
+`xiiif-sources' ships a handful of GLAM endpoints (Gallica,
+Wellcome, Internet Archive) used by `M-x xiiif-open-source`.  Add
+your own with a `:manifest-url' `format' template (single `%s') or
+a `:manifest-url-fn' of one argument.  Set `:encode-id t' to pass
+the identifier through `url-hexify-string' before substitution;
+the default keeps ARK-style IDs with literal slashes intact.
 
 ### Extensibility hooks
 
