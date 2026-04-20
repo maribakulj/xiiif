@@ -76,23 +76,53 @@ Point must be at the beginning of the buffer.  Returns an integer or nil."
      (signal 'xiiif-parse-error
              (list url (error-message-string err))))))
 
+(defun xiiif-api--content-type ()
+  "Return the Content-Type header value of the current response buffer, or nil."
+  (save-excursion
+    (goto-char (point-min))
+    (when (re-search-forward
+           "^Content-Type:[ \t]*\\([^\r\n;]+\\)" nil t)
+      (downcase (string-trim (match-string 1))))))
+
+(defun xiiif-api--warn-content-type (url ct)
+  "Emit a lazy warning when CT is present and does not look like JSON."
+  (when (and ct (not (string-match-p
+                       "\\(?:application/ld\\+json\\|application/json\\|\\+json\\)"
+                       ct)))
+    (display-warning
+     'xiiif
+     (format "Unexpected Content-Type %S from %s (parsing as JSON anyway)"
+             ct url)
+     :warning)))
+
 (defun xiiif-api--response-json (url)
   "Parse the current `url' response buffer as IIIF JSON for URL.
 Signals `xiiif-http-error' on non-2xx responses and
-`xiiif-parse-error' on invalid JSON."
-  (let ((status (xiiif-api--status-code)))
+`xiiif-parse-error' on invalid JSON.  A mismatching Content-Type is
+reported via `display-warning' but not treated as an error."
+  (let ((status (xiiif-api--status-code))
+        (ct     (xiiif-api--content-type)))
     (when (and status (or (< status 200) (>= status 400)))
       (signal 'xiiif-http-error (list url status)))
+    (xiiif-api--warn-content-type url ct)
     (xiiif-api--parse-json (xiiif-api--decode-body) url)))
 
 (defun xiiif-api--request-headers (&optional url)
   "Return the HTTP request header alist used by every xiiif call.
-When URL matches an entry in `xiiif-server-profiles', any headers
-declared by that profile are appended."
-  (append
-   `(("Accept"     . "application/ld+json, application/json")
-     ("User-Agent" . ,xiiif-api-user-agent))
-   (xiiif-profile-headers url)))
+When URL matches an entry in `xiiif-server-profiles', any explicit
+`:headers' are appended and, if the profile declares `:auth', an
+`Authorization' header is resolved via `auth-source' and appended
+last (so an explicit `:headers' entry still wins for the same
+header name)."
+  (let* ((base
+          `(("Accept"     . "application/ld+json, application/json")
+            ("User-Agent" . ,xiiif-api-user-agent)))
+         (profile-headers (xiiif-profile-headers url))
+         (auth (unless (assoc-string "Authorization" profile-headers t)
+                 (xiiif-profile-auth-header url))))
+    (append base
+            profile-headers
+            (and auth (list auth)))))
 
 (defun xiiif-api-fetch-json (url)
   "Fetch URL synchronously and return parsed JSON.
