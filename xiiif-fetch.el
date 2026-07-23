@@ -34,6 +34,7 @@
 (require 'cl-lib)
 (require 'xiiif-api)
 (require 'xiiif-profiles)
+(require 'xiiif-image-cache)
 
 (defcustom xiiif-fetch-max-concurrent 4
   "Maximum number of scheduler requests in flight at once."
@@ -66,8 +67,9 @@ host is suspended for BACKOFF * 2^(ATTEMPT-1) seconds."
                (:constructor xiiif-fetch--request-create))
   "One scheduled fetch.  ENTRIES is a list of plists
 \(:callback FN :errback FN :group G), newest first, so a
-deduplicated request can fan out to several callers."
-  kind url destination entries priority attempts handle host)
+deduplicated request can fan out to several callers.  CACHE
+non-nil persists a bytes result in the image cache."
+  kind url destination entries priority attempts handle host cache)
 
 (defvar xiiif-fetch--queue nil
   "Pending `xiiif-fetch--request' objects, oldest first.")
@@ -85,7 +87,8 @@ deduplicated request can fan out to several callers."
   "Pending deferred-pump timer, or nil.")
 
 (defvar xiiif-fetch--stats
-  (list :started 0 :completed 0 :failed 0 :deduped 0 :retried 0)
+  (list :started 0 :completed 0 :failed 0 :deduped 0 :retried 0
+        :cache-hits 0)
   "Mutable counters behind `xiiif-fetch-stats'.")
 
 (defun xiiif-fetch--now ()
@@ -106,10 +109,21 @@ transfer, every caller's callbacks.  Returns an opaque request
 object accepted by `xiiif-fetch-cancel'."
   (xiiif-fetch--submit 'json url nil callback errback priority group))
 
-(cl-defun xiiif-fetch-bytes (url callback &key errback priority group)
+(cl-defun xiiif-fetch-bytes (url callback &key errback priority group cache)
   "Schedule an async raw-bytes fetch of URL through the scheduler.
-See `xiiif-fetch-json' for CALLBACK, ERRBACK, PRIORITY and GROUP."
-  (xiiif-fetch--submit 'bytes url nil callback errback priority group))
+See `xiiif-fetch-json' for CALLBACK, ERRBACK, PRIORITY and GROUP.
+With CACHE non-nil the on-disk image cache is consulted first - a
+hit invokes CALLBACK immediately (before this function returns)
+with zero network - and a fetched result is persisted for later
+revisits."
+  (if-let ((hit (and cache (xiiif-image-cache-get url))))
+      (progn
+        (cl-incf (plist-get xiiif-fetch--stats :cache-hits))
+        (with-demoted-errors "xiiif-fetch callback error: %S"
+          (funcall callback hit))
+        nil)
+    (xiiif-fetch--submit 'bytes url nil callback errback priority group
+                         cache)))
 
 (cl-defun xiiif-fetch-file (url destination callback &key errback priority group)
   "Schedule an async download of URL to DESTINATION.
@@ -144,8 +158,8 @@ be non-nil (untagged requests cannot be cancelled this way)."
 
 (defun xiiif-fetch-stats ()
   "Return a snapshot plist of scheduler counters and gauges.
-Counters: :started :completed :failed :deduped :retried.
-Gauges: :queued :active."
+Counters: :started :completed :failed :deduped :retried
+:cache-hits.  Gauges: :queued :active."
   (append (copy-sequence xiiif-fetch--stats)
           (list :queued (length xiiif-fetch--queue)
                 :active (length xiiif-fetch--active))))
@@ -160,17 +174,20 @@ Gauges: :queued :active."
   (setq xiiif-fetch--queue nil
         xiiif-fetch--active nil
         xiiif-fetch--stats
-        (list :started 0 :completed 0 :failed 0 :deduped 0 :retried 0))
+        (list :started 0 :completed 0 :failed 0 :deduped 0 :retried 0
+              :cache-hits 0))
   (clrhash xiiif-fetch--host-last)
   (clrhash xiiif-fetch--host-until))
 
 
 ;;; ---------- submission ----------
 
-(defun xiiif-fetch--submit (kind url destination callback errback priority group)
+(defun xiiif-fetch--submit (kind url destination callback errback priority
+                                 group &optional cache)
   "Queue a KIND request for URL; shared implementation.
-DESTINATION only applies to `file' requests.  CALLBACK, ERRBACK,
-PRIORITY and GROUP are as in `xiiif-fetch-json'."
+DESTINATION only applies to `file' requests; CACHE to `bytes'
+requests.  CALLBACK, ERRBACK, PRIORITY and GROUP are as in
+`xiiif-fetch-json'."
   (let ((priority (or priority 'interactive)))
     (unless (memq priority '(interactive prefetch))
       (error "xiiif-fetch: invalid priority %S" priority))
@@ -183,6 +200,8 @@ PRIORITY and GROUP are as in `xiiif-fetch-json'."
        (existing
         (cl-incf (plist-get xiiif-fetch--stats :deduped))
         (push entry (xiiif-fetch--request-entries existing))
+        (when cache
+          (setf (xiiif-fetch--request-cache existing) t))
         ;; An interactive rider promotes a still-queued prefetch.
         (when (and (eq priority 'interactive)
                    (eq (xiiif-fetch--request-priority existing) 'prefetch))
@@ -192,7 +211,7 @@ PRIORITY and GROUP are as in `xiiif-fetch-json'."
         (let ((req (xiiif-fetch--request-create
                     :kind kind :url url :destination destination
                     :entries (list entry) :priority priority
-                    :attempts 0
+                    :attempts 0 :cache cache
                     :host (xiiif-profile--url-host url))))
           (setq xiiif-fetch--queue (append xiiif-fetch--queue (list req)))
           (xiiif-fetch--pump)
@@ -287,6 +306,9 @@ Schedules a deferred pump for the earliest time-blocked request."
   (when (memq req xiiif-fetch--active)
     (setq xiiif-fetch--active (delq req xiiif-fetch--active))
     (cl-incf (plist-get xiiif-fetch--stats :completed))
+    (when (and (xiiif-fetch--request-cache req)
+               (eq (xiiif-fetch--request-kind req) 'bytes))
+      (xiiif-image-cache-put (xiiif-fetch--request-url req) result))
     (dolist (entry (reverse (xiiif-fetch--request-entries req)))
       (with-demoted-errors "xiiif-fetch callback error: %S"
         (funcall (plist-get entry :callback) result)))

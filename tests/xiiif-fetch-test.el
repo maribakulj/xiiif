@@ -349,6 +349,52 @@ under the url backend) must not wedge the queue."
         (should (equal '("http://h/good")
                        (xiiif-fetch-test--started)))))))
 
+;;; ---- image cache integration ----
+
+(defmacro xiiif-fetch-test--with-image-cache (&rest body)
+  "Run BODY inside the scheduler harness with a temp image cache."
+  (declare (indent 0) (debug (body)))
+  `(xiiif-fetch-test--with
+     (let* ((dir (make-temp-file "xiiif-fetch-imgc-" t))
+            (xiiif-image-cache-directory dir)
+            (xiiif-image-cache-enabled t))
+       (unwind-protect
+           (progn ,@body)
+         (when (file-directory-p dir)
+           (dolist (f (directory-files dir t "^[^.]"))
+             (ignore-errors (delete-file f)))
+           (ignore-errors (delete-directory dir)))))))
+
+(ert-deftest xiiif-fetch/bytes-cache-stores-fetched-result ()
+  (xiiif-fetch-test--with-image-cache
+    (let (got)
+      (xiiif-fetch-bytes "http://h/i.jpg" (lambda (b) (setq got b))
+                         :cache t)
+      (should (= 1 (length xiiif-fetch-test--calls)))
+      (xiiif-fetch-test--complete "http://h/i.jpg" "imagebytes")
+      (should (equal "imagebytes" got))
+      (should (equal "imagebytes"
+                     (xiiif-image-cache-get "http://h/i.jpg"))))))
+
+(ert-deftest xiiif-fetch/bytes-cache-hit-skips-network ()
+  (xiiif-fetch-test--with-image-cache
+    (xiiif-image-cache-put "http://h/i.jpg" "cachedbytes")
+    (let (got)
+      (should-not (xiiif-fetch-bytes "http://h/i.jpg"
+                                     (lambda (b) (setq got b))
+                                     :cache t))
+      ;; Delivered synchronously, zero transport calls.
+      (should (equal "cachedbytes" got))
+      (should-not xiiif-fetch-test--calls)
+      (should (= 1 (plist-get (xiiif-fetch-stats) :cache-hits))))))
+
+(ert-deftest xiiif-fetch/bytes-without-cache-flag-not-persisted ()
+  (xiiif-fetch-test--with-image-cache
+    (xiiif-fetch-bytes "http://h/i.jpg" #'ignore)
+    (xiiif-fetch-test--complete "http://h/i.jpg" "imagebytes")
+    (should-not (xiiif-image-cache-get "http://h/i.jpg"))))
+
+
 (ert-deftest xiiif-fetch/stats-gauges ()
   (xiiif-fetch-test--with
     (let ((xiiif-fetch-max-concurrent 1))
