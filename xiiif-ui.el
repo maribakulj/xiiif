@@ -795,7 +795,7 @@ The actual transfer runs asynchronously so Emacs stays responsive."
 
 (defvar xiiif-annotations-mode-map
   (let ((map (make-sparse-keymap)))
-    (define-key map (kbd "g") #'xiiif-refresh)
+    (define-key map (kbd "g") #'xiiif-ui--annotations-refresh)
     (define-key map (kbd "J") #'xiiif-show-raw-json)
     (define-key map (kbd "q") #'quit-window)
     map)
@@ -847,6 +847,13 @@ ANNOTATIONS may be empty; the buffer still opens with a diagnostic."
             (xiiif-ui--insert-annotation a)))
         (goto-char (point-min))))
     (pop-to-buffer-same-window buf)))
+
+(defun xiiif-ui--annotations-refresh ()
+  "Re-collect and re-render the annotations in the current buffer."
+  (interactive)
+  (unless xiiif-ui--annotations-canvas
+    (user-error "No annotations context to refresh"))
+  (xiiif-show-annotations xiiif-ui--annotations-canvas))
 
 
 ;;; ---------- OCR sidecar ----------

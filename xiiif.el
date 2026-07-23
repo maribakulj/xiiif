@@ -374,12 +374,14 @@ by `xiiif-ui--ocr-refresh'."
                   (xiiif-canvas-title c)))))))
 
 ;;;###autoload
-(defun xiiif-show-annotations ()
+(defun xiiif-show-annotations (&optional canvas)
   "Fetch and display non-painting annotations for the contextual canvas.
 Inline AnnotationPages are rendered immediately; external references
-are resolved asynchronously and merged in document order."
+are resolved asynchronously and merged in document order.
+CANVAS is passed explicitly when invoked non-interactively by
+`xiiif-ui--annotations-refresh'."
   (interactive)
-  (let ((canvas (xiiif--require-canvas)))
+  (let ((canvas (or canvas (xiiif--require-canvas))))
     (message "xiiif: collecting annotations...")
     (xiiif-annotations-collect
      canvas

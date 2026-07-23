@@ -153,6 +153,44 @@ image landed at the top of the new content)."
               (kill-buffer (nth 2 entry)))))))))
 
 
+;;; ---- annotations refresh ----
+
+(ert-deftest xiiif-ui/annotations-refresh-rerenders-annotations ()
+  "`g' in the annotations buffer re-collects the canvas annotations
+instead of falling back to the manifest overview (regression:
+`xiiif-refresh' has no annotations branch)."
+  (should (eq (lookup-key xiiif-annotations-mode-map (kbd "g"))
+              'xiiif-ui--annotations-refresh))
+  (let ((canvas (make-xiiif-canvas
+                 :id "http://x/c1"
+                 :label "Folio 1"
+                 :raw '((id . "http://x/c1")
+                        (type . "Canvas")
+                        (annotations
+                         .
+                         [((id . "http://x/ap")
+                           (type . "AnnotationPage")
+                           (items . [((id . "http://x/a1")
+                                      (motivation . "commenting")
+                                      (target . "http://x/c1")
+                                      (body . ((type . "TextualBody")
+                                               (value . "refreshed"))))]))])))))
+    (xiiif-ui-test--in-temp xiiif-ui--annotations-buffer
+      (xiiif-ui-render-annotations canvas nil)
+      (with-current-buffer xiiif-ui--annotations-buffer
+        (call-interactively #'xiiif-ui--annotations-refresh))
+      (with-current-buffer xiiif-ui--annotations-buffer
+        (should (derived-mode-p 'xiiif-annotations-mode))
+        (goto-char (point-min))
+        (should (search-forward "Annotations (1)" nil t))
+        (should (search-forward "refreshed" nil t))))))
+
+
+(ert-deftest xiiif-ui/annotations-refresh-requires-context ()
+  (with-temp-buffer
+    (should-error (xiiif-ui--annotations-refresh) :type 'user-error)))
+
+
 ;;; ---- collection browser ----
 
 (ert-deftest xiiif-ui/collection-rendering ()
