@@ -26,6 +26,7 @@
 (require 'json)
 
 (require 'xiiif-core)
+(require 'xiiif-api)
 (require 'xiiif-cache)
 (require 'xiiif-image)
 (require 'xiiif-annotations)
@@ -336,29 +337,53 @@ Only used as a fallback when the canvas does not declare its own
   :type 'string
   :group 'xiiif)
 
+(defvar-local xiiif-ui--thumbnail-generation 0
+  "Render generation of the canvas detail buffer.
+Bumped on every re-render so a thumbnail callback started against an
+earlier rendering can detect that its marker no longer points into
+the current content and drop the insert.")
+(put 'xiiif-ui--thumbnail-generation 'permanent-local t)
+
+(defvar-local xiiif-ui--thumbnail-inflight nil
+  "Cancellable handle of the in-flight thumbnail fetch, or nil.")
+(put 'xiiif-ui--thumbnail-inflight 'permanent-local t)
+
 (defun xiiif-ui--insert-thumbnail-async (canvas buffer marker)
   "Fetch a thumbnail for CANVAS and insert it at MARKER in BUFFER.
-Does nothing on text-only displays or when CANVAS has no usable URL."
+Does nothing on text-only displays or when CANVAS has no usable URL.
+The response is dropped when BUFFER has been re-rendered or killed in
+the meantime: `xiiif-ui-render-canvas' cancels the stored handle and
+bumps the generation this closure captures."
   (when (and (display-graphic-p)
              (buffer-live-p buffer))
     (let ((url (xiiif-canvas-thumbnail-url
-                canvas xiiif-ui-thumbnail-size)))
+                canvas xiiif-ui-thumbnail-size))
+          (generation (buffer-local-value
+                       'xiiif-ui--thumbnail-generation buffer)))
       (when url
-        (xiiif-api-fetch-bytes-async
-         url
-         (lambda (bytes)
-           (when (buffer-live-p buffer)
-             (with-current-buffer buffer
-               (save-excursion
-                 (goto-char marker)
-                 (let ((inhibit-read-only t))
-                   (condition-case _
-                       (insert-image (create-image bytes nil t))
-                     (error
-                      (insert
-                       (propertize "(could not render thumbnail)"
-                                   'face 'xiiif-hint)))))))))
-         (lambda (_err) nil))))))
+        (let ((handle
+               (xiiif-api-fetch-bytes-async
+                url
+                (lambda (bytes)
+                  (when (and (buffer-live-p buffer)
+                             (= generation
+                                (buffer-local-value
+                                 'xiiif-ui--thumbnail-generation buffer)))
+                    (with-current-buffer buffer
+                      (setq xiiif-ui--thumbnail-inflight nil)
+                      (save-excursion
+                        (goto-char marker)
+                        (let ((inhibit-read-only t))
+                          (condition-case _
+                              (insert-image (create-image bytes nil t))
+                            (error
+                             (insert
+                              (propertize "(could not render thumbnail)"
+                                          'face 'xiiif-hint)))))))))
+                (lambda (_err) nil))))
+          (when (buffer-live-p buffer)
+            (with-current-buffer buffer
+              (setq xiiif-ui--thumbnail-inflight handle))))))))
 
 (defun xiiif-ui-render-canvas (canvas)
   "Render the canvas detail buffer for CANVAS and display it.
@@ -368,6 +393,9 @@ fetches a small preview asynchronously and inserts it at the end."
         (service (xiiif-canvas-image-service canvas))
         thumb-marker)
     (with-current-buffer buf
+      (xiiif-api-cancel xiiif-ui--thumbnail-inflight)
+      (setq xiiif-ui--thumbnail-inflight nil)
+      (cl-incf xiiif-ui--thumbnail-generation)
       (xiiif-canvas-mode)
       (setq-local xiiif-ui--canvas canvas)
       (let ((inhibit-read-only t))

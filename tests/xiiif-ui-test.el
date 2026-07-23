@@ -97,6 +97,62 @@
         (should xiiif-ui--canvas)))))
 
 
+;;; ---- canvas detail thumbnail race ----
+
+(ert-deftest xiiif-ui/thumbnail-stale-response-dropped ()
+  "A thumbnail response arriving after the canvas buffer was
+re-rendered is dropped and the stale fetch cancelled (regression:
+the marker collapsed to `point-min' after `erase-buffer' and the
+image landed at the top of the new content)."
+  (let ((xiiif-ui-show-thumbnails t)
+        (captured nil)              ; (URL CALLBACK HANDLE), newest first
+        (cancelled nil))
+    (cl-letf (((symbol-function 'display-graphic-p)
+               (lambda (&optional _) t))
+              ((symbol-function 'xiiif-api-fetch-bytes-async)
+               (lambda (url callback &optional _errback)
+                 (let ((handle (generate-new-buffer " *thumb-stub*")))
+                   (push (list url callback handle) captured)
+                   handle)))
+              ((symbol-function 'xiiif-api-cancel)
+               (lambda (handle) (when handle (push handle cancelled)))))
+      (xiiif-ui-test--in-temp xiiif-ui--canvas-buffer
+        (unwind-protect
+            (progn
+              (xiiif-ui-render-canvas (xiiif-ui-test--canvas))
+              (xiiif-ui-render-canvas (xiiif-ui-test--canvas))
+              (should (= 2 (length captured)))
+              (pcase-let ((`(,_ ,cb2 ,h2) (nth 0 captured))
+                          (`(,_ ,cb1 ,h1) (nth 1 captured)))
+                ;; The re-render cancelled the first fetch and stored
+                ;; the handle of the new one.
+                (should (memq h1 cancelled))
+                (should (eq h2 (buffer-local-value
+                                'xiiif-ui--thumbnail-inflight
+                                (get-buffer xiiif-ui--canvas-buffer))))
+                ;; Late response from the first render: no insertion.
+                ;; (The fake bytes cannot be decoded, so an accepted
+                ;; response always shows the fallback text.)
+                (funcall cb1 "stale-bytes")
+                (with-current-buffer xiiif-ui--canvas-buffer
+                  (goto-char (point-min))
+                  (should-not
+                   (search-forward "could not render thumbnail" nil t)))
+                ;; Response for the current render lands at its marker,
+                ;; after the Thumbnail heading - exactly once.
+                (funcall cb2 "fresh-bytes")
+                (with-current-buffer xiiif-ui--canvas-buffer
+                  (goto-char (point-min))
+                  (should (search-forward "Thumbnail" nil t))
+                  (should
+                   (search-forward "could not render thumbnail" nil t))
+                  (should-not
+                   (search-forward "could not render thumbnail" nil t)))))
+          (dolist (entry captured)
+            (when (buffer-live-p (nth 2 entry))
+              (kill-buffer (nth 2 entry)))))))))
+
+
 ;;; ---- collection browser ----
 
 (ert-deftest xiiif-ui/collection-rendering ()
