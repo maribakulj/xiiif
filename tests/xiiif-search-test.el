@@ -86,6 +86,53 @@
       (should (equal "bare-string-hit"
                      (xiiif-search-hit-chars second))))))
 
+(ert-deftest xiiif-search--parse/carries-region-from-string-on ()
+  (let* ((hits (xiiif-search--parse xiiif-search-test--response))
+         (region (xiiif-search-hit-region (car hits))))
+    (should (xiiif-region-p region))
+    (should (= 10 (xiiif-region-x region)))
+    (should (= 40 (xiiif-region-h region)))
+    ;; The regionless second hit has none.
+    (should-not (xiiif-search-hit-region (cadr hits)))))
+
+
+;;; ---- v2 fixture with structured selectors ----
+
+(defconst xiiif-search-test--v2-fixture
+  (expand-file-name
+   "../examples/sample-search-v2.json"
+   (file-name-directory (or load-file-name buffer-file-name))))
+
+(defun xiiif-search-test--read-json (path)
+  (let ((json-object-type 'alist)
+        (json-array-type  'vector)
+        (json-key-type    'symbol)
+        (json-false       :json-false)
+        (json-null        nil))
+    (require 'json)
+    (json-read-file path)))
+
+(ert-deftest xiiif-search--parse/v2-fixture-regions ()
+  "The v2 Search fixture yields regions from a string `on' and from
+a structured `on'/`full' + `selector'."
+  (let ((hits (xiiif-search--parse
+               (xiiif-search-test--read-json
+                xiiif-search-test--v2-fixture))))
+    (should (= 2 (length hits)))
+    (let ((h1 (car hits)))
+      (should (equal "https://example.org/iiif/book1/canvas/1"
+                     (xiiif-search-hit-canvas-id h1)))
+      (should (equal "lettrine" (xiiif-search-hit-chars h1)))
+      (let ((r (xiiif-search-hit-region h1)))
+        (should (= 200 (xiiif-region-x r)))
+        (should (= 90 (xiiif-region-h r)))))
+    (let ((h2 (cadr hits)))
+      (should (equal "https://example.org/iiif/book1/canvas/2"
+                     (xiiif-search-hit-canvas-id h2)))
+      (let ((r (xiiif-search-hit-region h2)))
+        (should (= 50 (xiiif-region-x r)))
+        (should (= 80 (xiiif-region-h r)))))))
+
 
 (provide 'xiiif-search-test)
 ;;; xiiif-search-test.el ends here

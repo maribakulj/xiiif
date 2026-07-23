@@ -1,0 +1,46 @@
+{
+  "@context": "http://iiif.io/api/presentation/3/context.json",
+  "id": "https://example.org/iiif/book1/annopage/p1",
+  "type": "AnnotationPage",
+  "items": [
+    {
+      "id": "https://example.org/iiif/book1/anno/1",
+      "type": "Annotation",
+      "motivation": "commenting",
+      "body": {
+        "type": "TextualBody",
+        "language": "fr",
+        "value": "Lettrine ornée en tête de chapitre."
+      },
+      "target": {
+        "type": "SpecificResource",
+        "source": "https://example.org/iiif/book1/canvas/1",
+        "selector": {
+          "type": "FragmentSelector",
+          "conformsTo": "http://www.w3.org/TR/media-frags/",
+          "value": "xywh=100,150,400,300"
+        }
+      }
+    },
+    {
+      "id": "https://example.org/iiif/book1/anno/2",
+      "type": "Annotation",
+      "motivation": "tagging",
+      "body": {
+        "type": "TextualBody",
+        "value": "marginalia"
+      },
+      "target": "https://example.org/iiif/book1/canvas/1#xywh=percent:10,20,30,40"
+    },
+    {
+      "id": "https://example.org/iiif/book1/anno/3",
+      "type": "Annotation",
+      "motivation": "commenting",
+      "body": {
+        "type": "TextualBody",
+        "value": "Whole-canvas note, no region."
+      },
+      "target": "https://example.org/iiif/book1/canvas/1"
+    }
+  ]
+}

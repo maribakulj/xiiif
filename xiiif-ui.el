@@ -26,6 +26,7 @@
 (require 'json)
 
 (require 'xiiif-core)
+(require 'xiiif-region)
 (require 'xiiif-api)
 (require 'xiiif-fetch)
 (require 'xiiif-cache)
@@ -827,6 +828,8 @@ The actual transfer runs asynchronously so Emacs stays responsive."
   "Insert one `xiiif-annotation' A into the current buffer."
   (xiiif-ui--insert-field "Motivation" (xiiif-annotation-motivation a))
   (xiiif-ui--insert-field "Target"     (xiiif-annotation-target a))
+  (xiiif-ui--insert-field "Region"
+                          (xiiif-region-to-string (xiiif-annotation-region a)))
   (xiiif-ui--insert-field "Type"       (xiiif-annotation-body-type a))
   (xiiif-ui--insert-field "Language"   (xiiif-annotation-body-lang a))
   (when-let ((val (xiiif-annotation-body-value a)))

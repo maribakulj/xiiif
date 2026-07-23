@@ -7,7 +7,9 @@
 ;;; Code:
 
 (require 'ert)
+(require 'json)
 (require 'xiiif-core)
+(require 'xiiif-region)
 (require 'xiiif-annotations)
 
 
@@ -38,6 +40,27 @@
                        (value . "marginalia")))))))
     (should (equal "http://x/c1" (xiiif-annotation-target a)))
     (should (equal "marginalia"  (xiiif-annotation-body-value a)))))
+
+(ert-deftest xiiif-parse-annotation/carries-region-from-selector ()
+  (let ((a (xiiif-parse-annotation
+            '((id . "http://x/a2")
+              (motivation . "tagging")
+              (target . ((type . "SpecificResource")
+                         (source . "http://x/c1")
+                         (selector . ((type . "FragmentSelector")
+                                      (value . "xywh=100,150,400,300")))))))))
+    (should (equal "http://x/c1" (xiiif-annotation-target a)))
+    (let ((r (xiiif-annotation-region a)))
+      (should (xiiif-region-p r))
+      (should (= 100 (xiiif-region-x r)))
+      (should (= 300 (xiiif-region-h r))))))
+
+(ert-deftest xiiif-parse-annotation/no-region-when-whole-canvas ()
+  (let ((a (xiiif-parse-annotation
+            '((id . "http://x/a1")
+              (target . "http://x/c1")
+              (body . ((value . "hi")))))))
+    (should-not (xiiif-annotation-region a))))
 
 (ert-deftest xiiif-parse-annotation/string-body ()
   (let ((a (xiiif-parse-annotation
@@ -98,6 +121,38 @@
     (should-not (plist-get (cadr refs) :inline))
     (should (equal "http://x/ap-external"
                    (plist-get (cadr refs) :url)))))
+
+;;; ---- v3 fixture ----
+
+(defconst xiiif-annotations-test--page-fixture
+  (expand-file-name
+   "../examples/sample-annotation-page.json"
+   (file-name-directory (or load-file-name buffer-file-name))))
+
+(defun xiiif-annotations-test--read-json (path)
+  (let ((json-object-type 'alist)
+        (json-array-type  'vector)
+        (json-key-type    'symbol)
+        (json-false       :json-false)
+        (json-null        nil))
+    (json-read-file path)))
+
+(ert-deftest xiiif-parse-annotation-page/v3-fixture-regions ()
+  "The v3 AnnotationPage fixture yields a FragmentSelector region, a
+percent Media-Fragments region, and a regionless whole-canvas note."
+  (let ((anns (xiiif-parse-annotation-page
+               (xiiif-annotations-test--read-json
+                xiiif-annotations-test--page-fixture))))
+    (should (= 3 (length anns)))
+    (let ((r1 (xiiif-annotation-region (nth 0 anns))))
+      (should (xiiif-region-p r1))
+      (should (= 100 (xiiif-region-x r1)))
+      (should (eq 'pixel (xiiif-region-unit r1))))
+    (let ((r2 (xiiif-annotation-region (nth 1 anns))))
+      (should (xiiif-region-p r2))
+      (should (= 10 (xiiif-region-x r2)))
+      (should (eq 'percent (xiiif-region-unit r2))))
+    (should-not (xiiif-annotation-region (nth 2 anns)))))
 
 (provide 'xiiif-annotations-test)
 ;;; xiiif-annotations-test.el ends here

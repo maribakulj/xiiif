@@ -52,6 +52,7 @@
 (require 'xiiif-api)
 (require 'xiiif-fetch)
 (require 'xiiif-core)
+(require 'xiiif-region)
 (require 'xiiif-cache)
 (require 'xiiif-image)
 (require 'xiiif-annotations)

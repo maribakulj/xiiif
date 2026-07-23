@@ -18,12 +18,15 @@
 
 (require 'cl-lib)
 (require 'xiiif-core)
+(require 'xiiif-region)
 (require 'xiiif-api)
 (require 'xiiif-fetch)
 
 (cl-defstruct xiiif-annotation
-  "Normalized IIIF Web Annotation (W3C)."
-  id motivation target body-value body-type body-lang raw)
+  "Normalized IIIF Web Annotation (W3C).
+REGION is the `xiiif-region' carried by the target, or nil when the
+annotation targets the whole canvas."
+  id motivation target region body-value body-type body-lang raw)
 
 
 ;;; ---------- body and target helpers ----------
@@ -68,11 +71,13 @@
 
 (defun xiiif-parse-annotation (json)
   "Parse JSON into a `xiiif-annotation' struct."
-  (let ((body (xiiif--get json 'body)))
+  (let ((body   (xiiif--get json 'body))
+        (target (xiiif--get json 'target)))
     (make-xiiif-annotation
      :id         (xiiif--get json 'id)
      :motivation (xiiif--get json 'motivation)
-     :target     (xiiif-annotation--target-id (xiiif--get json 'target))
+     :target     (xiiif-annotation--target-id target)
+     :region     (xiiif-region-from-target target)
      :body-value (xiiif-annotation--body-value body)
      :body-type  (xiiif-annotation--body-type  body)
      :body-lang  (xiiif-annotation--body-lang  body)

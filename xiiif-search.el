@@ -21,6 +21,7 @@
 (require 'subr-x)
 (require 'tabulated-list)
 (require 'xiiif-core)
+(require 'xiiif-region)
 (require 'xiiif-api)
 (require 'xiiif-fetch)
 (require 'xiiif-cache)
@@ -59,7 +60,9 @@
 ;;; ---------- query + hit parsing ----------
 
 (cl-defstruct xiiif-search-hit
-  "A single Search API result." canvas-id chars before after raw)
+  "A single Search API result.
+REGION is the `xiiif-region' of the match on its canvas, or nil."
+  canvas-id region chars before after raw)
 
 (defun xiiif-search--hit-chars (annotation)
   "Return the matched text inside ANNOTATION's resource, or nil."
@@ -76,9 +79,16 @@
      ((stringp on)
       (car (split-string on "#" t)))
      ((consp on)
-      (or (xiiif--get on 'source)
-          (xiiif--get on 'full)
-          (xiiif--get on 'id))))))
+      (let ((base (or (xiiif--get on 'source)
+                      (xiiif--get on 'full)
+                      (xiiif--get on 'id))))
+        (and (stringp base) (car (split-string base "#" t))))))))
+
+(defun xiiif-search--hit-region (annotation)
+  "Return the `xiiif-region' of ANNOTATION's match, or nil."
+  (xiiif-region-from-target
+   (or (xiiif--get annotation 'on)
+       (xiiif--get annotation 'target))))
 
 (defun xiiif-search--context-for (annotation-id hits-context)
   "Return (:before :after) plist for ANNOTATION-ID from HITS-CONTEXT.
@@ -101,6 +111,7 @@ alongside the `resources'; each entry carries `annotations',
               (ctx (xiiif-search--context-for id context)))
          (make-xiiif-search-hit
           :canvas-id (xiiif-search--hit-target anno)
+          :region    (xiiif-search--hit-region anno)
           :chars     (xiiif-search--hit-chars anno)
           :before    (plist-get ctx :before)
           :after     (plist-get ctx :after)
@@ -141,8 +152,9 @@ receives (ERROR-SYMBOL URL &rest DATA)."
 (define-derived-mode xiiif-search-mode tabulated-list-mode "XIIIF-Search"
   "Major mode for IIIF Search 1.0 result buffers."
   (setq tabulated-list-format
-        [("Canvas" 40 t)
-         ("Match"  80 nil)])
+        [("Canvas" 32 t)
+         ("Region" 16 nil)
+         ("Match"  72 nil)])
   (setq tabulated-list-padding 2)
   (setq tabulated-list-sort-key nil)
   (tabulated-list-init-header))
@@ -162,6 +174,9 @@ receives (ERROR-SYMBOL URL &rest DATA)."
   "Build a tabulated-list entry for HIT within MANIFEST."
   (let* ((label (xiiif-search--canvas-short
                  (xiiif-search-hit-canvas-id hit) manifest))
+         (region (or (xiiif-region-to-string
+                      (xiiif-search-hit-region hit))
+                     ""))
          (match (mapconcat
                  #'identity
                  (delq nil
@@ -172,7 +187,7 @@ receives (ERROR-SYMBOL URL &rest DATA)."
                                    'face 'bold))
                              (xiiif-search-hit-after hit)))
                  "")))
-    (list hit (vector label (or match "")))))
+    (list hit (vector label region (or match "")))))
 
 (defun xiiif-search--render (manifest query hits)
   "Render HITS from a QUERY run against MANIFEST into the search buffer."
