@@ -37,6 +37,15 @@
   :type 'string
   :group 'xiiif)
 
+(defcustom xiiif-api-max-body-size (* 50 1024 1024)
+  "Maximum response body size in bytes accepted by xiiif fetches.
+When a response advertises a larger body via `Content-Length', the
+fetch fails with a `xiiif-body-too-large' error instead of handing
+the oversized body to the JSON parser or image decoder.  Set to nil
+to disable the guard."
+  :type '(choice (const :tag "No limit" nil) integer)
+  :group 'xiiif)
+
 (defun xiiif-api--valid-url-p (url)
   "Return non-nil if URL looks like a supported URL.
 Accepts http(s):// and file:// schemes.  file:// URLs are mostly
@@ -106,6 +115,19 @@ shapes as the pure-Elisp reader: alists with symbol keys, vectors,
            nil t)
       (match-string 1))))
 
+(defun xiiif-api--check-body-size (url)
+  "Signal `xiiif-body-too-large' when the response body is oversized.
+The current buffer must be a `url' response buffer.  The check only
+fires when `xiiif-api-max-body-size' is non-nil and the response
+advertises a larger body via `Content-Length'; the error data is
+\(URL LENGTH LIMIT)."
+  (when xiiif-api-max-body-size
+    (let* ((header (xiiif-api--header-value "Content-Length"))
+           (length (and header (string-to-number header))))
+      (when (and length (> length xiiif-api-max-body-size))
+        (signal 'xiiif-body-too-large
+                (list url length xiiif-api-max-body-size))))))
+
 (defun xiiif-api--warn-content-type (url ct)
   "Emit a lazy warning when CT is present and does not look like JSON."
   (when (and ct (not (string-match-p
@@ -138,6 +160,7 @@ fetches."
      ((and status (or (< status 200) (>= status 400)))
       (signal 'xiiif-http-error (list url status)))
      (t
+      (xiiif-api--check-body-size url)
       (xiiif-api--warn-content-type url ct)
       (let ((body (xiiif-api--decode-body))
             (etag (xiiif-api--header-value "ETag"))
@@ -204,6 +227,9 @@ ERR is the list (ERROR-SYMBOL URL &rest DATA) produced by the
   (pcase-let* ((`(,sym ,url . ,rest) err)
                (detail (car rest)))
     (pcase sym
+      ('xiiif-body-too-large
+       (format "xiiif: response from %s is too large (%s > %s bytes)"
+               url detail (cadr rest)))
       ('xiiif-http-error
        (pcase detail
          (401 (format "xiiif: %s requires authentication (HTTP 401)" url))
@@ -317,6 +343,7 @@ shape used by `xiiif-api-fetch-json-async'."
                          (let ((code (xiiif-api--status-code)))
                            (when (and code (or (< code 200) (>= code 400)))
                              (signal 'xiiif-http-error (list url code))))
+                         (xiiif-api--check-body-size url)
                          (xiiif-api--skip-headers)
                          (set-buffer-multibyte nil)
                          (funcall callback

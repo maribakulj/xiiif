@@ -20,6 +20,8 @@
 (define-error 'xiiif-network-error "xiiif network error"    'xiiif-error)
 (define-error 'xiiif-http-error    "xiiif HTTP error"       'xiiif-error)
 (define-error 'xiiif-parse-error   "xiiif JSON parse error" 'xiiif-error)
+(define-error 'xiiif-body-too-large
+  "xiiif response body exceeds the configured size limit" 'xiiif-http-error)
 
 (provide 'xiiif-errors)
 ;;; xiiif-errors.el ends here
