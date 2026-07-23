@@ -31,9 +31,11 @@
 
 (require 'cl-lib)
 (require 'subr-x)
+(require 'image)
 (require 'xiiif-core)
 (require 'xiiif-region)
 (require 'xiiif-image)
+(require 'xiiif-fetch)
 
 (cl-defstruct xiiif-view-state
   "A view onto a canvas region.
@@ -206,6 +208,375 @@ FORMAT and QUALITY override the Image API defaults."
                      :w (xiiif-view-state-w state)
                      :h (xiiif-view-state-h state)
                      :unit 'pixel))
+
+
+;;; ---------- navigation math (pure) ----------
+
+(defun xiiif-view--with-region (state region)
+  "Return a copy of STATE whose x/y/w/h are set from REGION (a list)."
+  (let ((s (copy-xiiif-view-state state)))
+    (setf (xiiif-view-state-x s) (nth 0 region)
+          (xiiif-view-state-y s) (nth 1 region)
+          (xiiif-view-state-w s) (nth 2 region)
+          (xiiif-view-state-h s) (nth 3 region))
+    s))
+
+(defun xiiif-view-fit-region (state info win-w win-h)
+  "Return STATE resized so its region fills WIN-W by WIN-H logical px.
+The region width is WIN-W / scale canvas pixels (scale from the
+zoom level); the centre is preserved and the result clamped to the
+canvas.  WIN-W/WIN-H are display-area pixels."
+  (let* ((scale (xiiif-view-scale-at info (xiiif-view-state-level state)))
+         (cx (+ (xiiif-view-state-x state)
+                (/ (xiiif-view-state-w state) 2.0)))
+         (cy (+ (xiiif-view-state-y state)
+                (/ (xiiif-view-state-h state) 2.0)))
+         (rw (max 1 (round (/ win-w scale))))
+         (rh (max 1 (round (/ win-h scale))))
+         (full-w (and info (xiiif-image-info-width info)))
+         (full-h (and info (xiiif-image-info-height info))))
+    (xiiif-view--with-region
+     state
+     (xiiif-view--clamp-region (- cx (/ rw 2.0)) (- cy (/ rh 2.0))
+                               rw rh full-w full-h))))
+
+(defun xiiif-view-pan (state info dx-frac dy-frac)
+  "Return STATE panned by DX-FRAC x W and DY-FRAC x H, clamped.
+Positive DX-FRAC moves the view right, DY-FRAC down."
+  (let* ((dx (round (* dx-frac (xiiif-view-state-w state))))
+         (dy (round (* dy-frac (xiiif-view-state-h state))))
+         (full-w (and info (xiiif-image-info-width info)))
+         (full-h (and info (xiiif-image-info-height info))))
+    (xiiif-view--with-region
+     state
+     (xiiif-view--clamp-region (+ (xiiif-view-state-x state) dx)
+                               (+ (xiiif-view-state-y state) dy)
+                               (xiiif-view-state-w state)
+                               (xiiif-view-state-h state)
+                               full-w full-h))))
+
+(defun xiiif-view-zoom (state info delta win-w win-h)
+  "Return STATE with zoom level changed by DELTA, refit to the window.
+DELTA is clamped so the level stays within the scale table."
+  (let* ((maxl (xiiif-view-max-level info))
+         (new-level (max 0 (min (+ (xiiif-view-state-level state) delta) maxl)))
+         (s (copy-xiiif-view-state state)))
+    (setf (xiiif-view-state-level s) new-level)
+    (xiiif-view-fit-region s info win-w win-h)))
+
+(defun xiiif-view-neighbors (state info)
+  "Return the four pan-neighbour states of STATE (for prefetch)."
+  (delq nil
+        (list (xiiif-view-pan state info -1.0 0)
+              (xiiif-view-pan state info  1.0 0)
+              (xiiif-view-pan state info 0 -1.0)
+              (xiiif-view-pan state info 0  1.0))))
+
+
+;;; ---------- interactive viewer ----------
+
+(defcustom xiiif-view-cache-size 8
+  "Number of decoded region images kept in the per-buffer LRU.
+Emacs's own image cache evicts only by age, not size; this bounds
+the viewer's memory and flushes evicted images."
+  :type 'integer
+  :group 'xiiif)
+
+(defcustom xiiif-view-prefetch t
+  "When non-nil, the viewer prefetches neighbouring regions at low priority."
+  :type 'boolean
+  :group 'xiiif)
+
+(defcustom xiiif-view-idle-delay 0.15
+  "Seconds of idle time before the sharp image request is issued.
+Coalesces rapid pan/zoom so only the settled view is fetched."
+  :type 'number
+  :group 'xiiif)
+
+;; image-size is a C primitive only present in a graphical build; the
+;; sole caller wraps it in `ignore-errors' for the text-mode case.
+(declare-function image-size "image" (spec &optional pixels frame))
+
+(defconst xiiif-view--buffer "*XIIIF View*")
+
+(defvar-local xiiif-view--state nil "The `xiiif-view-state' shown here.")
+(defvar-local xiiif-view--service nil "Image service backing the view.")
+(defvar-local xiiif-view--info nil "The `xiiif-image-info', or nil.")
+(defvar-local xiiif-view--image nil "The image object currently displayed.")
+(defvar-local xiiif-view--generation 0 "Bumped on each navigation.")
+(defvar-local xiiif-view--group nil "Current fetch group symbol.")
+(defvar-local xiiif-view--lru nil "List of (URL . IMAGE), most-recent first.")
+(defvar-local xiiif-view--idle-timer nil "Pending coalesced-fetch timer.")
+
+(defun xiiif-view--hidpi ()
+  "Return the display scale factor, or 1.0 when it cannot be detected."
+  (if (fboundp 'frame-scale-factor)
+      (condition-case nil (float (frame-scale-factor)) (error 1.0))
+    1.0))
+
+(defun xiiif-view--window-pixels ()
+  "Return (WIDTH . HEIGHT) of the view window body in pixels."
+  (let ((win (get-buffer-window xiiif-view--buffer)))
+    (if win
+        (cons (window-body-width win t) (window-body-height win t))
+      (cons 800 600))))
+
+
+;;; ---- per-buffer image LRU ----
+
+(defun xiiif-view--lru-get (url)
+  "Return the cached image for URL, promoting it to most-recent."
+  (when-let ((cell (assoc url xiiif-view--lru)))
+    (setq xiiif-view--lru (cons cell (delq cell xiiif-view--lru)))
+    (cdr cell)))
+
+(defun xiiif-view--lru-put (url image)
+  "Cache IMAGE under URL, evicting and flushing the oldest over the cap."
+  (setq xiiif-view--lru
+        (cons (cons url image)
+              (cl-remove url xiiif-view--lru :key #'car :test #'equal)))
+  (when (> (length xiiif-view--lru) xiiif-view-cache-size)
+    (dolist (cell (nthcdr xiiif-view-cache-size xiiif-view--lru))
+      (when (and (fboundp 'image-flush) (cdr cell))
+        (ignore-errors (image-flush (cdr cell)))))
+    (setq xiiif-view--lru (cl-subseq xiiif-view--lru 0 xiiif-view-cache-size)))
+  image)
+
+(defun xiiif-view--make-image (bytes scale)
+  "Return an image object from BYTES displayed at SCALE, or nil on failure.
+Isolated so tests can substitute a stub for the graphics layer."
+  (condition-case nil
+      (create-image bytes nil t :scale scale)
+    (error nil)))
+
+
+;;; ---- request + display ----
+
+(defun xiiif-view--url (state)
+  "Return the Image API URL for STATE in the current buffer."
+  (xiiif-view-image-url state xiiif-view--service
+                        :info xiiif-view--info
+                        :hidpi (xiiif-view--hidpi)
+                        :margin 0.0))
+
+(defun xiiif-view--display-image (image)
+  "Replace the view buffer's content with IMAGE, centred."
+  (let ((inhibit-read-only t))
+    (erase-buffer)
+    (when image
+      (let* ((win (get-buffer-window (current-buffer)))
+             (iw (car (ignore-errors (image-size image t))))
+             (pad (and win iw
+                       (max 0 (/ (- (window-body-width win t) iw) 2)))))
+        (when (and pad (> pad 0))
+          (insert (propertize " " 'display `(space :width (,pad))))))
+      (insert-image image))
+    (insert "\n")
+    (setq xiiif-view--image image)))
+
+(defun xiiif-view--display-status (text)
+  "Show TEXT as the view buffer content (used off graphic displays)."
+  (let ((inhibit-read-only t))
+    (erase-buffer)
+    (insert (propertize text 'face 'font-lock-comment-face) "\n")))
+
+(defun xiiif-view--fetch-sharp (state generation)
+  "Fetch the sharp image for STATE and display it when still current.
+GENERATION guards against a response that a later navigation
+superseded."
+  (let ((url (xiiif-view--url state))
+        (buffer (current-buffer))
+        (scale (/ 1.0 (xiiif-view--hidpi))))
+    (xiiif-fetch-bytes
+     url
+     (lambda (bytes)
+       (when (and (buffer-live-p buffer)
+                  (= generation (buffer-local-value
+                                 'xiiif-view--generation buffer)))
+         (with-current-buffer buffer
+           (when-let ((image (xiiif-view--make-image bytes scale)))
+             (xiiif-view--lru-put url image)
+             (xiiif-view--display-image image)))))
+     :group xiiif-view--group
+     :cache t)))
+
+(defun xiiif-view--prefetch (state)
+  "Queue low-priority fetches of STATE's neighbouring regions."
+  (when xiiif-view-prefetch
+    (dolist (neighbor (xiiif-view-neighbors state xiiif-view--info))
+      (xiiif-fetch-bytes
+       (xiiif-view--url neighbor)
+       #'ignore
+       :group xiiif-view--group
+       :priority 'prefetch
+       :cache t))))
+
+(defun xiiif-view--render (&optional proxy-scale)
+  "Render the current state: cached image now, or a proxy then a fetch.
+PROXY-SCALE, when non-nil, redisplays the image in hand at that
+scale as an immediate low-fidelity stand-in while the sharp version
+is fetched."
+  (if (not (display-graphic-p))
+      (xiiif-view--display-status
+       (format "Region viewer needs a graphic display.\nImage URL: %s\nUse `xiiif-view-copy-url' (y) to copy it."
+               (xiiif-view--url xiiif-view--state)))
+    (let* ((url (xiiif-view--url xiiif-view--state))
+           (cached (xiiif-view--lru-get url)))
+      (cond
+       (cached (xiiif-view--display-image cached))
+       ((and proxy-scale xiiif-view--image)
+        (xiiif-view--display-image
+         (xiiif-view--rescale xiiif-view--image proxy-scale)))
+       (t nil))
+      (unless cached
+        (xiiif-view--schedule-fetch)))))
+
+(defun xiiif-view--rescale (image scale)
+  "Return IMAGE with its display scale multiplied by SCALE (a proxy)."
+  (let ((copy (copy-sequence image)))
+    (setf (image-property copy :scale)
+          (* (or (image-property image :scale) 1.0) scale))
+    copy))
+
+(defun xiiif-view--schedule-fetch ()
+  "Debounce the sharp fetch and neighbour prefetch for the current view."
+  (when (timerp xiiif-view--idle-timer)
+    (cancel-timer xiiif-view--idle-timer))
+  (let ((buffer (current-buffer))
+        (state xiiif-view--state)
+        (generation xiiif-view--generation))
+    (setq xiiif-view--idle-timer
+          (run-with-idle-timer
+           xiiif-view-idle-delay nil
+           (lambda ()
+             (when (buffer-live-p buffer)
+               (with-current-buffer buffer
+                 (when (= generation xiiif-view--generation)
+                   (xiiif-view--fetch-sharp state generation)
+                   (xiiif-view--prefetch state)))))))))
+
+(defun xiiif-view--navigate (new-state &optional proxy-scale)
+  "Move the viewer to NEW-STATE, cancelling the previous view's fetches.
+PROXY-SCALE is forwarded to `xiiif-view--render' for an immediate
+rescaled stand-in during zoom."
+  (when xiiif-view--group
+    (xiiif-fetch-cancel-group xiiif-view--group))
+  (setq xiiif-view--state new-state)
+  (cl-incf xiiif-view--generation)
+  (setq xiiif-view--group (make-symbol
+                           (format "xiiif-view-%d" xiiif-view--generation)))
+  (xiiif-view--render proxy-scale))
+
+
+;;; ---- commands ----
+
+(defvar xiiif-view-mode-map
+  (let ((map (make-sparse-keymap)))
+    (dolist (k '("<left>" "h")) (define-key map (kbd k) #'xiiif-view-pan-left))
+    (dolist (k '("<right>" "l")) (define-key map (kbd k) #'xiiif-view-pan-right))
+    (dolist (k '("<up>" "k")) (define-key map (kbd k) #'xiiif-view-pan-up))
+    (dolist (k '("<down>" "j")) (define-key map (kbd k) #'xiiif-view-pan-down))
+    (dolist (k '("+" "=")) (define-key map (kbd k) #'xiiif-view-zoom-in))
+    (define-key map (kbd "-") #'xiiif-view-zoom-out)
+    (define-key map (kbd "0") #'xiiif-view-zoom-reset)
+    (define-key map (kbd "g") #'xiiif-view-refresh)
+    (define-key map (kbd "q") #'quit-window)
+    map)
+  "Keymap for `xiiif-view-mode'.")
+
+(define-derived-mode xiiif-view-mode special-mode "XIIIF-View"
+  "Major mode for the step-by-step IIIF region viewer."
+  (buffer-disable-undo)
+  (setq-local cursor-type nil)
+  (setq-local truncate-lines t))
+
+(defun xiiif-view--pan-step (fine)
+  "Return the pan fraction: half a screen, or a fine step with FINE."
+  (if fine 0.1 0.5))
+
+(defun xiiif-view-pan-left (&optional fine)
+  "Pan the view left by half a screen (FINE: a small step)."
+  (interactive "P")
+  (xiiif-view--navigate
+   (xiiif-view-pan xiiif-view--state xiiif-view--info
+                   (- (xiiif-view--pan-step fine)) 0)))
+
+(defun xiiif-view-pan-right (&optional fine)
+  "Pan the view right by half a screen (FINE: a small step)."
+  (interactive "P")
+  (xiiif-view--navigate
+   (xiiif-view-pan xiiif-view--state xiiif-view--info
+                   (xiiif-view--pan-step fine) 0)))
+
+(defun xiiif-view-pan-up (&optional fine)
+  "Pan the view up by half a screen (FINE: a small step)."
+  (interactive "P")
+  (xiiif-view--navigate
+   (xiiif-view-pan xiiif-view--state xiiif-view--info
+                   0 (- (xiiif-view--pan-step fine)))))
+
+(defun xiiif-view-pan-down (&optional fine)
+  "Pan the view down by half a screen (FINE: a small step)."
+  (interactive "P")
+  (xiiif-view--navigate
+   (xiiif-view-pan xiiif-view--state xiiif-view--info
+                   0 (xiiif-view--pan-step fine))))
+
+(defun xiiif-view-zoom-in ()
+  "Zoom in one level, refitting to the window."
+  (interactive)
+  (let ((win (xiiif-view--window-pixels)))
+    (xiiif-view--navigate
+     (xiiif-view-zoom xiiif-view--state xiiif-view--info 1
+                      (car win) (cdr win))
+     2.0)))
+
+(defun xiiif-view-zoom-out ()
+  "Zoom out one level, refitting to the window."
+  (interactive)
+  (let ((win (xiiif-view--window-pixels)))
+    (xiiif-view--navigate
+     (xiiif-view-zoom xiiif-view--state xiiif-view--info -1
+                      (car win) (cdr win))
+     0.5)))
+
+(defun xiiif-view-zoom-reset ()
+  "Reset the zoom to fit the whole canvas."
+  (interactive)
+  (let* ((win (xiiif-view--window-pixels))
+         (s (copy-xiiif-view-state xiiif-view--state)))
+    (setf (xiiif-view-state-level s) 0
+          (xiiif-view-state-x s) 0
+          (xiiif-view-state-y s) 0)
+    (xiiif-view--navigate (xiiif-view-fit-region s xiiif-view--info
+                                                 (car win) (cdr win)))))
+
+(defun xiiif-view-refresh ()
+  "Re-fetch the current view, bypassing the per-buffer image cache."
+  (interactive)
+  (setq xiiif-view--lru nil)
+  (xiiif-view--navigate xiiif-view--state))
+
+
+;;; ---- entry ----
+
+(defun xiiif-view-region (state &optional service info)
+  "Display STATE in the `*XIIIF View*' buffer and select it.
+SERVICE is the `xiiif-image-service' (defaults to nothing, in which
+case the view can still show its URL); INFO is a `xiiif-image-info'
+supplying dimensions, zoom scales and compliance."
+  (let ((buf (get-buffer-create xiiif-view--buffer)))
+    (with-current-buffer buf
+      (xiiif-view-mode)
+      (setq xiiif-view--service service
+            xiiif-view--info info
+            xiiif-view--lru nil
+            xiiif-view--image nil
+            xiiif-view--group nil
+            xiiif-view--generation 0)
+      (xiiif-view--navigate state))
+    (pop-to-buffer-same-window buf)
+    buf))
 
 (provide 'xiiif-view)
 ;;; xiiif-view.el ends here

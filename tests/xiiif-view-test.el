@@ -231,5 +231,206 @@ the advertised sizes - never a synthesized dimension."
     (should (equal "https://img/svc/full/!200,200/0/default.jpg"
                    (xiiif-canvas-thumbnail-url canvas)))))
 
+;;; ---- navigation math ----
+
+(ert-deftest xiiif-view/fit-region-fills-window ()
+  "At full scale (1.0) the region equals the window in canvas px."
+  (let* ((info (xiiif-view-test--info "sample-info.json"))
+         (max-level (xiiif-view-max-level info))
+         (state (make-xiiif-view-state :x 3000 :y 2000 :w 10 :h 10
+                                       :level max-level))
+         (fit (xiiif-view-fit-region state info 800 600)))
+    (should (= 800 (xiiif-view-state-w fit)))
+    (should (= 600 (xiiif-view-state-h fit)))
+    ;; Centre preserved: old centre (3005,2005) -> new x = 3005-400.
+    (should (= (- 3005 400) (xiiif-view-state-x fit)))))
+
+(ert-deftest xiiif-view/fit-region-lower-scale-larger-region ()
+  (let* ((info (xiiif-view-test--info "sample-info.json"))
+         ;; A level whose scale is 0.5 (3000/6000).
+         (scales (xiiif-view-scales info))
+         (level (cl-position 0.5 scales
+                             :test (lambda (a b) (< (abs (- a b)) 1e-6))))
+         (state (make-xiiif-view-state :x 0 :y 0 :w 10 :h 10 :level level))
+         (fit (xiiif-view-fit-region state info 400 400)))
+    ;; scale 0.5 -> region = 400/0.5 = 800 canvas px.
+    (should (= 800 (xiiif-view-state-w fit)))))
+
+(ert-deftest xiiif-view/pan-moves-and-clamps ()
+  (let* ((info (xiiif-view-test--info "sample-info.json")) ; 6000x4000
+         (state (make-xiiif-view-state :x 1000 :y 1000 :w 400 :h 400 :level 0)))
+    ;; Half-screen right = +200.
+    (should (= 1200 (xiiif-view-state-x (xiiif-view-pan state info 0.5 0))))
+    ;; Panning left past 0 clamps at 0.
+    (should (= 0 (xiiif-view-state-x (xiiif-view-pan state info -10.0 0))))))
+
+(ert-deftest xiiif-view/zoom-changes-level-and-clamps ()
+  (let* ((info (xiiif-view-test--info "sample-info.json"))
+         (maxl (xiiif-view-max-level info))
+         (state (make-xiiif-view-state :x 3000 :y 2000 :w 400 :h 400 :level 0)))
+    (should (= 1 (xiiif-view-state-level
+                  (xiiif-view-zoom state info 1 800 600))))
+    ;; Cannot zoom below 0 or above max.
+    (should (= 0 (xiiif-view-state-level
+                  (xiiif-view-zoom state info -5 800 600))))
+    (should (= maxl (xiiif-view-state-level
+                     (xiiif-view-zoom state info 999 800 600))))))
+
+(ert-deftest xiiif-view/neighbors-are-four-pans ()
+  (let* ((info (xiiif-view-test--info "sample-info.json"))
+         (state (make-xiiif-view-state :x 2000 :y 2000 :w 400 :h 400 :level 0))
+         (ns (xiiif-view-neighbors state info)))
+    (should (= 4 (length ns)))
+    (should (cl-every #'xiiif-view-state-p ns))))
+
+
+;;; ---- per-buffer LRU ----
+
+(ert-deftest xiiif-view/lru-evicts-and-flushes-oldest ()
+  (with-temp-buffer
+    (let ((xiiif-view-cache-size 3)
+          (flushed nil))
+      (cl-letf (((symbol-function 'image-flush)
+                 (lambda (img &rest _) (push img flushed))))
+        (dotimes (i 5)
+          (xiiif-view--lru-put (format "u%d" i) (list 'image i)))
+        ;; Only the 3 most-recent survive.
+        (should (= 3 (length xiiif-view--lru)))
+        (should (xiiif-view--lru-get "u4"))
+        (should (xiiif-view--lru-get "u2"))
+        (should-not (assoc "u0" xiiif-view--lru))
+        (should-not (assoc "u1" xiiif-view--lru))
+        ;; The evicted images were flushed.
+        (should (member '(image 0) flushed))))))
+
+(ert-deftest xiiif-view/lru-get-promotes ()
+  (with-temp-buffer
+    (let ((xiiif-view-cache-size 3))
+      (xiiif-view--lru-put "a" 'ia)
+      (xiiif-view--lru-put "b" 'ib)
+      (xiiif-view--lru-put "c" 'ic)
+      ;; Touch "a" so it is no longer the oldest.
+      (should (eq 'ia (xiiif-view--lru-get "a")))
+      (xiiif-view--lru-put "d" 'id) ; evicts the oldest, now "b"
+      (should-not (assoc "b" xiiif-view--lru))
+      (should (assoc "a" xiiif-view--lru)))))
+
+
+;;; ---- render pipeline (stubbed graphics + transport) ----
+
+(defmacro xiiif-view-test--with-viewer (&rest body)
+  "Run BODY in a viewer buffer with graphics and fetch stubbed.
+Binds `fetched' (list of (URL PRIORITY) submitted, newest first) and
+`cancelled' (groups cancelled).  Images are opaque (list IMAGE URL)."
+  (declare (indent 0) (debug (body)))
+  `(let ((fetched nil) (cancelled nil))
+     (cl-letf (((symbol-function 'display-graphic-p) (lambda (&rest _) t))
+               ((symbol-function 'xiiif-view--make-image)
+                (lambda (bytes _scale) (list 'image bytes)))
+               ((symbol-function 'xiiif-view--display-image)
+                (lambda (image) (setq xiiif-view--image image)))
+               ((symbol-function 'run-with-idle-timer)
+                (lambda (_delay _rep fn &rest args) (apply fn args) nil))
+               ((symbol-function 'xiiif-fetch-cancel-group)
+                (lambda (g) (push g cancelled)))
+               ((symbol-function 'xiiif-fetch-bytes)
+                (lambda (url cb &rest kw)
+                  (push (list url (plist-get kw :priority)) fetched)
+                  (when (eq (plist-get kw :priority) nil)
+                    (funcall cb (format "bytes-of:%s" url)))
+                  'req)))
+       (with-temp-buffer
+         (rename-buffer xiiif-view--buffer t)
+         (xiiif-view-mode)
+         (setq xiiif-view--info
+               (xiiif-view-test--info "sample-info.json")
+               xiiif-view--service (make-xiiif-image-service :id "https://img/svc"))
+         ,@body))))
+
+(ert-deftest xiiif-view/navigate-fetches-and-caches ()
+  (xiiif-view-test--with-viewer
+    (xiiif-view--navigate
+     (make-xiiif-view-state :x 0 :y 0 :w 400 :h 400 :level 1))
+    ;; An interactive (priority nil) sharp fetch happened...
+    (should (cl-find nil fetched :key #'cadr))
+    ;; ...and its result landed in the LRU.
+    (should (= 1 (cl-count nil fetched :key #'cadr)))
+    (should xiiif-view--image)))
+
+(ert-deftest xiiif-view/navigate-cancels-previous-group ()
+  (xiiif-view-test--with-viewer
+    (xiiif-view--navigate
+     (make-xiiif-view-state :x 0 :y 0 :w 400 :h 400 :level 1))
+    (let ((first-group xiiif-view--group))
+      (should first-group)
+      (xiiif-view--navigate
+       (make-xiiif-view-state :x 100 :y 100 :w 400 :h 400 :level 1))
+      (should (memq first-group cancelled)))))
+
+(ert-deftest xiiif-view/navigate-queues-prefetch ()
+  (let ((xiiif-view-prefetch t))
+    (xiiif-view-test--with-viewer
+      (xiiif-view--navigate
+       (make-xiiif-view-state :x 2000 :y 2000 :w 400 :h 400 :level 1))
+      ;; Four neighbours queued at prefetch priority.
+      (should (= 4 (cl-count 'prefetch fetched :key #'cadr))))))
+
+(ert-deftest xiiif-view/cached-navigation-skips-fetch ()
+  (xiiif-view-test--with-viewer
+    (let ((state (make-xiiif-view-state :x 0 :y 0 :w 400 :h 400 :level 1)))
+      (xiiif-view--navigate state)
+      (setq fetched nil)
+      ;; Navigating back to the same URL uses the LRU, no interactive fetch.
+      (xiiif-view--navigate (copy-xiiif-view-state state))
+      (should-not (cl-find nil fetched :key #'cadr)))))
+
+(ert-deftest xiiif-view/stale-response-dropped ()
+  "A sharp response for a superseded generation is ignored."
+  (let ((held nil))
+    (cl-letf (((symbol-function 'display-graphic-p) (lambda (&rest _) t))
+              ((symbol-function 'xiiif-view--make-image)
+               (lambda (bytes _scale) (list 'image bytes)))
+              ((symbol-function 'xiiif-view--display-image)
+               (lambda (image) (setq xiiif-view--image image)))
+              ((symbol-function 'run-with-idle-timer)
+               (lambda (_d _r fn &rest args) (apply fn args) nil))
+              ((symbol-function 'xiiif-fetch-cancel-group) #'ignore)
+              ((symbol-function 'xiiif-fetch-bytes)
+               (lambda (_url cb &rest kw)
+                 (unless (plist-get kw :priority)
+                   (push cb held))
+                 'req)))
+      (with-temp-buffer
+        (rename-buffer xiiif-view--buffer t)
+        (xiiif-view-mode)
+        (setq xiiif-view--info (xiiif-view-test--info "sample-info.json")
+              xiiif-view--service (make-xiiif-image-service :id "https://img/svc"))
+        (xiiif-view--navigate
+         (make-xiiif-view-state :x 0 :y 0 :w 400 :h 400 :level 1))
+        (let ((stale-cb (car held)))
+          ;; Navigate away, superseding the pending fetch.
+          (xiiif-view--navigate
+           (make-xiiif-view-state :x 500 :y 500 :w 400 :h 400 :level 1))
+          (setq xiiif-view--image nil)
+          ;; The stale callback must not touch the buffer now.
+          (funcall stale-cb "late-bytes")
+          (should-not xiiif-view--image))))))
+
+
+;;; ---- terminal fallback ----
+
+(ert-deftest xiiif-view/terminal-shows-url-not-crash ()
+  (cl-letf (((symbol-function 'display-graphic-p) (lambda (&rest _) nil)))
+    (with-temp-buffer
+      (rename-buffer xiiif-view--buffer t)
+      (xiiif-view-mode)
+      (setq xiiif-view--info (xiiif-view-test--info "sample-info.json")
+            xiiif-view--service (make-xiiif-image-service :id "https://img/svc"))
+      (xiiif-view--navigate
+       (make-xiiif-view-state :x 0 :y 0 :w 400 :h 400 :level 1))
+      (goto-char (point-min))
+      (should (search-forward "graphic display" nil t))
+      (should (search-forward "https://img/svc/" nil t)))))
+
 (provide 'xiiif-view-test)
 ;;; xiiif-view-test.el ends here
