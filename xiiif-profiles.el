@@ -43,6 +43,9 @@ a request URL wins.  Supported plist keys:
             `:headers', so user-supplied headers still win.
   :image    Plist of Image API overrides used by `xiiif-image-url'.
             Keys: :region :size :rotation :quality :format.
+  :min-interval  Minimum seconds between two request starts to a
+            matching server, overriding `xiiif-fetch-host-interval'
+            for the request scheduler.
   :notes    Free text."
   :type '(alist :key-type regexp :value-type plist)
   :group 'xiiif-profiles)
@@ -64,6 +67,10 @@ a request URL wins.  Supported plist keys:
 (defun xiiif-profile-image-defaults (url)
   "Return the :image override plist for URL, or nil."
   (plist-get (xiiif-profile-for-url url) :image))
+
+(defun xiiif-profile-min-interval (url)
+  "Return the :min-interval seconds for URL's server profile, or nil."
+  (plist-get (xiiif-profile-for-url url) :min-interval))
 
 (declare-function auth-source-search "auth-source")
 
