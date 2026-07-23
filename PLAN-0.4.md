@@ -43,7 +43,7 @@
 - [x] Étape 1 — Bugs E1–E3 + compile-strict propre
 - [x] Étape 2 — JSON natif (A4) + garde de taille (E6)
 - [x] Étape 3 — Backend HTTP commutable url/plz (A1)
-- [ ] Étape 4 — Ordonnanceur `xiiif-fetch.el` (A2)
+- [x] Étape 4 — Ordonnanceur `xiiif-fetch.el` (A2)
 - [ ] Étape 5 — Caches : éviction HTTP (E7) + cache disque d'images (A3)
 - [ ] Étape 6 — Migration interne vers `xiiif-fetch`
 - [ ] Étape 7 — Régions parsées partout (C1, corrige M1)
