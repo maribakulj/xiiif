@@ -130,6 +130,7 @@ identical to the pure-Elisp reader on every bundled fixture."
 (ert-deftest xiiif-api-fetch-bytes-async/oversized-body-calls-errback ()
   "The bytes path enforces the size guard before extracting the body."
   (let ((xiiif-api-max-body-size 10)
+        (xiiif-api-backend 'url)
         (captured nil))
     (cl-letf (((symbol-function 'url-retrieve)
                (lambda (_url callback &optional _cbargs _silent _inhibit)

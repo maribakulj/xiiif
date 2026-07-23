@@ -32,7 +32,8 @@
 
 (defmacro xiiif-annotations-test--with (fixtures &rest body)
   (declare (indent 1) (debug (form body)))
-  `(let ((xiiif-annotations-test--fixtures ,fixtures))
+  `(let ((xiiif-annotations-test--fixtures ,fixtures)
+         (xiiif-api-backend 'url))
      (cl-letf (((symbol-function 'url-retrieve)
                 #'xiiif-annotations-test--stub))
        ,@body)))

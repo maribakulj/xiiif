@@ -40,7 +40,8 @@ HTTP/1.1 200 response.  Returns a temp buffer as handle."
 (defmacro xiiif-download-test--with-stub (fixtures &rest body)
   "Install the stub `url-retrieve' and run BODY with FIXTURES."
   (declare (indent 1) (debug (form body)))
-  `(let ((xiiif-download-test--fixtures ,fixtures))
+  `(let ((xiiif-download-test--fixtures ,fixtures)
+         (xiiif-api-backend 'url))
      (cl-letf (((symbol-function 'url-retrieve)
                 #'xiiif-download-test--stub))
        ,@body)))

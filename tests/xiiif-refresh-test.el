@@ -36,7 +36,8 @@
 
 (defmacro xiiif-refresh-test--with (fixtures &rest body)
   (declare (indent 1) (debug (form body)))
-  `(let ((xiiif-refresh-test--fixtures ,fixtures))
+  `(let ((xiiif-refresh-test--fixtures ,fixtures)
+         (xiiif-api-backend 'url))
      (cl-letf (((symbol-function 'url-retrieve)
                 #'xiiif-refresh-test--stub))
        ,@body)))
