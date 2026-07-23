@@ -92,7 +92,7 @@ the current buffer is read-only (e.g. inside a xiiif overview)."
 
 ;;;###autoload
 (defun xiiif-org-insert-image (canvas)
-  "Insert (or kill-ring-copy) an Org link to the default image derivative of CANVAS."
+  "Insert (or kill-ring-copy) an Org link to CANVAS's default derivative."
   (xiiif-org--require)
   (let ((link (xiiif-org-image-link canvas)))
     (unless link (user-error "Canvas has no image service"))

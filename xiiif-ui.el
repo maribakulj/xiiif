@@ -760,8 +760,17 @@ The actual transfer runs asynchronously so Emacs stays responsive."
     (pop-to-buffer-same-window buf)))
 
 (declare-function xiiif-show-info-json "xiiif")
-(declare-function xiiif-show-annotations "xiiif")
+(declare-function xiiif-show-annotations "xiiif" (&optional canvas))
 (declare-function xiiif-show-ocr "xiiif")
+(declare-function xiiif-download-image "xiiif")
+(declare-function xiiif-browse-canvases "xiiif")
+(declare-function xiiif-copy-image-url "xiiif")
+(declare-function xiiif-copy-manifest-url "xiiif")
+(declare-function xiiif-download-marked "xiiif")
+(declare-function xiiif-insert-org-link "xiiif")
+(declare-function xiiif-refresh "xiiif")
+(declare-function xiiif-show-raw-json "xiiif")
+(declare-function xiiif-show-structures "xiiif")
 
 (defun xiiif-ui--info-refresh ()
   "Re-fetch the current info.json."
