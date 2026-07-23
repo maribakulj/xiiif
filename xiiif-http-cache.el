@@ -38,6 +38,20 @@
   :type 'directory
   :group 'xiiif-http-cache)
 
+(defcustom xiiif-http-cache-max-entries 512
+  "Maximum number of entries kept in the HTTP cache.
+The oldest entries (by store time) are deleted when a store pushes
+the cache over this cap.  nil disables the entry cap."
+  :type '(choice (const :tag "No limit" nil) integer)
+  :group 'xiiif-http-cache)
+
+(defcustom xiiif-http-cache-max-bytes nil
+  "Maximum total size in bytes of the HTTP cache, or nil for no cap.
+The oldest entries (by store time) are deleted when a store pushes
+the cache over this cap."
+  :type '(choice (const :tag "No limit" nil) integer)
+  :group 'xiiif-http-cache)
+
 
 ;;; ---------- on-disk layout ----------
 
@@ -77,9 +91,41 @@ An entry is a plist with keys `:url', `:etag', `:last-modified',
        (or (null (plist-get entry :last-modified))
            (stringp (plist-get entry :last-modified)))))
 
+(defun xiiif-http-cache--evict-directory (dir pattern max-entries max-bytes)
+  "Delete the oldest files matching PATTERN in DIR to fit the caps.
+Oldest is by file modification time - store time, or last-use time
+for caches that touch entries on read.  MAX-ENTRIES and MAX-BYTES
+may each be nil to disable that cap.  I/O errors are swallowed.
+Shared by the HTTP cache and the image byte cache."
+  (when (and (or max-entries max-bytes)
+             (file-directory-p dir))
+    (condition-case nil
+        (let* ((entries
+                (sort
+                 (mapcar (lambda (file)
+                           (let ((attrs (file-attributes file)))
+                             (list file
+                                   (float-time
+                                    (file-attribute-modification-time
+                                     attrs))
+                                   (file-attribute-size attrs))))
+                         (directory-files dir t pattern t))
+                 (lambda (a b) (< (nth 1 a) (nth 1 b)))))
+               (count (length entries))
+               (bytes (cl-loop for e in entries sum (nth 2 e))))
+          (dolist (entry entries)
+            (when (or (and max-entries (> count max-entries))
+                      (and max-bytes (> bytes max-bytes)))
+              (ignore-errors (delete-file (nth 0 entry)))
+              (setq count (1- count)
+                    bytes (- bytes (nth 2 entry))))))
+      (error nil))))
+
 (defun xiiif-http-cache-store (url body &optional etag last-modified)
   "Persist BODY for URL with ETAG / LAST-MODIFIED validators.
-Returns the entry alist.  I/O failures are swallowed."
+Returns the entry alist.  I/O failures are swallowed.  Storing may
+evict the oldest entries beyond `xiiif-http-cache-max-entries' /
+`xiiif-http-cache-max-bytes'."
   (when xiiif-http-cache-enabled
     (condition-case err
         (progn
@@ -94,6 +140,10 @@ Returns the entry alist.  I/O failures are swallowed."
             (with-temp-file file
               (set-buffer-multibyte nil)
               (prin1 entry (current-buffer)))
+            (xiiif-http-cache--evict-directory
+             xiiif-http-cache-directory "\\.el\\'"
+             xiiif-http-cache-max-entries
+             xiiif-http-cache-max-bytes)
             entry))
       (error
        (message "xiiif-http-cache: could not store %s: %s"
