@@ -132,6 +132,18 @@ trailing `%'."
               (funcall fmt (xiiif-region-h region))
               (if (eq (xiiif-region-unit region) 'percent) "%" "")))))
 
+(defun xiiif-region-to-fragment (region)
+  "Return REGION as a Media Fragments value, or nil.
+A pixel region becomes \"xywh=X,Y,W,H\"; a percent region becomes
+\"xywh=percent:X,Y,W,H\".  This is the form used in a canvas
+fragment identifier (Content State targets), distinct from the
+Image API `pct:' segment of `xiiif-region-to-image-api'."
+  (when (xiiif-region-p region)
+    (format "xywh=%s%s,%s,%s,%s"
+            (if (eq (xiiif-region-unit region) 'percent) "percent:" "")
+            (xiiif-region-x region) (xiiif-region-y region)
+            (xiiif-region-w region) (xiiif-region-h region))))
+
 (defun xiiif-region-to-image-api (region)
   "Return REGION as an Image API `region' path segment.
 A pixel region becomes \"X,Y,W,H\"; a percent region becomes

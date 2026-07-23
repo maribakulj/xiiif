@@ -53,6 +53,7 @@
 (require 'xiiif-fetch)
 (require 'xiiif-core)
 (require 'xiiif-region)
+(require 'xiiif-anchor)
 (require 'xiiif-cache)
 (require 'xiiif-image)
 (require 'xiiif-annotations)
@@ -592,25 +593,85 @@ cleared before the retry, so a second failure is reported fresh."
 (defcustom xiiif-mirador-base-url
   "https://projectmirador.org/embed/"
   "Base URL of the Mirador viewer used by `xiiif-open-in-mirador'.
-The manifest URL is appended as `?iiif-content=<encoded manifest url>'."
+A IIIF Content State token is appended as `?iiif-content=<token>'."
   :type 'string
   :group 'xiiif)
 
+(defun xiiif--context-anchor ()
+  "Return a canonical anchor for the current xiiif context, or nil.
+Includes the canvas (and its region, when the point is on a search
+hit or annotation carrying one) when a canvas is in context, so the
+handoff is as precise as the current view allows."
+  (let ((m (xiiif--require-manifest))
+        (c (xiiif--canvas-in-context)))
+    (xiiif-anchor-create
+     :manifest (or (xiiif-manifest-url m) (xiiif-manifest-id m))
+     :canvas   (and c (xiiif-canvas-id c))
+     :label    (if c (xiiif-canvas-title c) (xiiif-manifest-title m)))))
+
 ;;;###autoload
-(defun xiiif-open-in-mirador ()
+(defun xiiif-open-in-mirador (&optional anchor)
   "Open the current manifest in an external Mirador viewer.
-Uses `browse-url' so Emacs's configured external browser is
-respected.  Signals `user-error' when no manifest is loaded."
+With no ANCHOR, builds one from context: the current canvas when
+one is open (a precise canvas handoff), else the whole manifest.
+ANCHOR, a canonical anchor plist (see `xiiif-anchor-create'), forces
+an exact canvas+region handoff.  Uses `browse-url' so Emacs's
+configured external browser is respected.  Signals `user-error'
+when no manifest is loaded."
   (interactive)
-  (let* ((m (xiiif--require-manifest))
-         (url (or (xiiif-manifest-url m)
-                  (xiiif-manifest-id m)
-                  (user-error "Current manifest has no URL"))))
-    (browse-url
-     (format "%s?iiif-content=%s"
-             (string-trim-right xiiif-mirador-base-url "?&")
-             (url-hexify-string url)))
-    (message "xiiif: opening %s in Mirador" (xiiif-manifest-title m))))
+  (let* ((anchor (or anchor (xiiif--context-anchor)))
+         (url (xiiif-content-state-url anchor xiiif-mirador-base-url)))
+    (unless (xiiif-anchor-manifest anchor)
+      (user-error "Current manifest has no URL"))
+    (browse-url url)
+    (message "xiiif: opening %s in Mirador"
+             (or (xiiif-anchor-label anchor) "manifest"))))
+
+(defun xiiif--open-anchor (anchor)
+  "Navigate to the location described by ANCHOR.
+Opens the canvas detail buffer for the anchored canvas, loading the
+manifest first when it is not the current one.  A region carried by
+ANCHOR is preserved for the region viewer (Spec B) but does not yet
+change what is displayed."
+  (let ((manifest-url (xiiif-anchor-manifest anchor))
+        (canvas-id    (xiiif-anchor-canvas anchor)))
+    (unless manifest-url
+      (user-error "Anchor has no manifest URL"))
+    (let ((current (and xiiif-current-manifest
+                        (equal (xiiif-manifest-url xiiif-current-manifest)
+                               manifest-url)
+                        xiiif-current-manifest)))
+      (if current
+          (xiiif--open-anchor-canvas current canvas-id)
+        (xiiif--load-resource-async
+         manifest-url
+         (lambda (manifest)
+           (xiiif-cache-set-manifest manifest)
+           (run-hook-with-args 'xiiif-after-load-manifest-hook manifest)
+           (xiiif--open-anchor-canvas manifest canvas-id))
+         (lambda (collection)
+           (xiiif-cache-set-collection collection)
+           (xiiif-ui-render-collection collection)))))))
+
+(defun xiiif--open-anchor-canvas (manifest canvas-id)
+  "Open CANVAS-ID within MANIFEST, or the manifest overview when absent."
+  (let ((canvas (and canvas-id
+                     (xiiif-manifest-find-canvas manifest canvas-id))))
+    (if canvas
+        (progn (xiiif-cache-set-canvas canvas)
+               (xiiif-ui-render-canvas canvas))
+      (xiiif-ui-render-manifest manifest))))
+
+;;;###autoload
+(defun xiiif-open-content-state (token)
+  "Open the location encoded in a IIIF Content State TOKEN.
+TOKEN may be a viewer URL carrying an `iiif-content=' parameter, a
+bare base64url Content State token, or the raw Content State JSON.
+Loads the referenced manifest and jumps to the anchored canvas."
+  (interactive (list (read-string "Content State URL or token: ")))
+  (when (string-blank-p token)
+    (user-error "Empty Content State token"))
+  (xiiif--open-anchor (xiiif-content-state-parse token)))
 
 ;;;###autoload
 (defun xiiif-export-citation (&optional format)
