@@ -40,7 +40,7 @@
 ## État d'avancement
 
 - [x] Étape 0 — Environnement, ligne de base, plan (cette session)
-- [ ] Étape 1 — Bugs E1–E3 + compile-strict propre
+- [x] Étape 1 — Bugs E1–E3 + compile-strict propre
 - [ ] Étape 2 — JSON natif (A4) + garde de taille (E6)
 - [ ] Étape 3 — Backend HTTP commutable url/plz (A1)
 - [ ] Étape 4 — Ordonnanceur `xiiif-fetch.el` (A2)
