@@ -303,20 +303,43 @@ Image objects) shapes."
          (xiiif--thumbnail-field-url (aref thumbnail 0))))
    ((consp thumbnail) (xiiif--get thumbnail 'id))))
 
-(defun xiiif-canvas-thumbnail-url (canvas &optional size)
+(defun xiiif-canvas-thumbnail-url (canvas &optional size info)
   "Return a URL string for a small preview of CANVAS, or nil.
 
 Preference order:
 1. an explicit `thumbnail' value declared by the canvas,
-2. a synthesized IIIF Image API derivative of the canvas image
-   service at SIZE (defaults to \"!200,200\")."
+2. an IIIF Image API derivative of the canvas image service.
+
+When INFO (a `xiiif-image-info') is supplied, the size segment is
+chosen from the server's advertised sizes via
+`xiiif-image-closest-size' - so the request stays valid on a
+level-0 server.  Absent INFO, SIZE (default \"!200,200\") is used,
+which suits level-1/2 servers.  The target width for the advertised
+lookup is derived from SIZE when it names one, else 200."
   (or (xiiif--thumbnail-field-url (xiiif-canvas-thumbnail canvas))
       (let* ((service (xiiif-canvas-image-service canvas))
              (base (and service (xiiif-image-service-id service))))
         (when base
-          (format "%s/full/%s/0/default.jpg"
-                  (string-trim-right base "/")
-                  (or size "!200,200"))))))
+          (let ((segment
+                 (or (and info
+                          (let* ((target (xiiif-canvas--thumbnail-target size))
+                                 (best (xiiif-image-closest-size info target)))
+                            (and best (concat "full/"
+                                              (plist-get best :segment)))))
+                     (concat "full/" (or size "!200,200")))))
+            (format "%s/%s/0/default.jpg"
+                    (string-trim-right base "/")
+                    segment))))))
+
+(defun xiiif-canvas--thumbnail-target (size)
+  "Return a numeric target width from a thumbnail SIZE segment.
+Understands \"!W,H\", \"W,H\", \"W,\" and \",H\"; defaults to 200."
+  (or (and (stringp size)
+           (string-match "\\([0-9]+\\)" size)
+           (string-to-number (match-string 1 size)))
+      200))
+
+(declare-function xiiif-image-closest-size "xiiif-image")
 
 
 

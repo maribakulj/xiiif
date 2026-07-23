@@ -54,6 +54,7 @@
 (require 'xiiif-core)
 (require 'xiiif-region)
 (require 'xiiif-anchor)
+(require 'xiiif-view)
 (require 'xiiif-cache)
 (require 'xiiif-image)
 (require 'xiiif-annotations)
