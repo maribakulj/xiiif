@@ -49,7 +49,7 @@
 - [x] Étape 7 — Régions parsées partout (C1, corrige M1)
 - [x] Étape 8 — Ancre canonique + Content State + Mirador précis (C2, corrige M7)
 - [x] Étape 9 — Viewer : modèle & géométrie (B1, corrige M6)
-- [ ] Étape 10 — Viewer : rendu & navigation (B2)
+- [x] Étape 10 — Viewer : rendu & navigation (B2)
 - [ ] Étape 11 — Viewer : commandes & intégration (B3)
 - [ ] Étape 12 — Notes ancrées, backend org (C3)
 - [ ] Étape 13 — Surface batch (D)
