@@ -45,7 +45,7 @@
 - [x] Étape 3 — Backend HTTP commutable url/plz (A1)
 - [x] Étape 4 — Ordonnanceur `xiiif-fetch.el` (A2)
 - [x] Étape 5 — Caches : éviction HTTP (E7) + cache disque d'images (A3)
-- [ ] Étape 6 — Migration interne vers `xiiif-fetch`
+- [x] Étape 6 — Migration interne vers `xiiif-fetch`
 - [ ] Étape 7 — Régions parsées partout (C1, corrige M1)
 - [ ] Étape 8 — Ancre canonique + Content State + Mirador précis (C2, corrige M7)
 - [ ] Étape 9 — Viewer : modèle & géométrie (B1, corrige M6)
