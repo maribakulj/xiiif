@@ -125,5 +125,54 @@
                    (mapcar #'xiiif-annotation-body-value got)))))
 
 
+(ert-deftest xiiif-annotations-collect/sync-errback-callback-once ()
+  "A synchronously-invoked errback (invalid URL) must not fire the
+final callback before the remaining fetches are dispatched, nor more
+than once (regression: double invocation of CALLBACK)."
+  (let* ((canvas (make-xiiif-canvas
+                  :id "http://x/c1"
+                  :raw '((id . "http://x/c1")
+                         (type . "Canvas")
+                         (annotations
+                          .
+                          [((id . "not-a-valid-url")
+                            (type . "AnnotationPage"))
+                           ((id . "http://x/ext")
+                            (type . "AnnotationPage"))]))))
+         (calls 0)
+         (got :not-called))
+    (xiiif-annotations-test--with
+        '(("http://x/ext"
+           .
+           "{\"id\":\"http://x/ap\",\"type\":\"AnnotationPage\",\"items\":[{\"id\":\"http://x/a1\",\"motivation\":\"commenting\",\"target\":\"http://x/c1\",\"body\":{\"type\":\"TextualBody\",\"value\":\"kept\"}}]}"))
+      (xiiif-annotations-collect
+       canvas (lambda (annos) (cl-incf calls) (setq got annos))))
+    (should (xiiif-annotations-test--wait-for
+             (lambda () (not (eq got :not-called)))))
+    ;; Drain pending timers so a spurious second invocation would show.
+    (dotimes (_ 5) (accept-process-output nil 0.02))
+    (should (= 1 calls))
+    (should (equal '("kept") (mapcar #'xiiif-annotation-body-value got)))))
+
+
+(ert-deftest xiiif-annotations-collect/all-sync-errbacks-callback-once ()
+  "When every external fetch fails synchronously, CALLBACK still runs
+exactly once (regression: once per errback plus the post-loop check)."
+  (let* ((canvas (make-xiiif-canvas
+                  :id "http://x/c1"
+                  :raw '((id . "http://x/c1")
+                         (type . "Canvas")
+                         (annotations
+                          .
+                          [((id . "bad-one") (type . "AnnotationPage"))
+                           ((id . "bad-two") (type . "AnnotationPage"))]))))
+         (calls 0)
+         (got :not-called))
+    (xiiif-annotations-collect
+     canvas (lambda (annos) (cl-incf calls) (setq got annos)))
+    (should (= 1 calls))
+    (should (null got))))
+
+
 (provide 'xiiif-annotations-collect-test)
 ;;; xiiif-annotations-collect-test.el ends here

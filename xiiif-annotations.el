@@ -104,40 +104,45 @@ objects without inline items are returned as external URL refs."
   "Resolve every annotation attached to CANVAS and call CALLBACK.
 Inline AnnotationPages are parsed immediately; external references
 are fetched asynchronously.  CALLBACK is invoked exactly once with
-the final list of `xiiif-annotation' structs in document order."
+the final list of `xiiif-annotation' structs in document order.
+
+The fetch dispatch is two-phase: inline pages are parsed and the
+external references collected first, then every fetch is issued
+with the pending count already at its final value.  An errback that
+runs synchronously (e.g. on an invalid URL) therefore cannot drive
+the count to zero while later fetches are still waiting to start."
   (let* ((refs (xiiif-canvas-annotation-refs canvas))
          (slots (make-vector (length refs) nil))
-         (pending 0)
-         (finish
-          (lambda ()
-            (funcall callback
-                     (apply #'append (append slots nil))))))
-    (if (null refs)
-        (funcall callback nil)
-      (cl-loop
-       for ref in refs
-       for i from 0
-       do
-       (let ((inline (plist-get ref :inline))
-             (url    (plist-get ref :url)))
-         (cond
-          (inline
-           (aset slots i (xiiif-parse-annotation-page inline)))
-          (url
-           (cl-incf pending)
-           (let ((idx i))
-             (xiiif-api-fetch-json-async
-              url
-              (lambda (json)
-                (aset slots idx (xiiif-parse-annotation-page json))
-                (cl-decf pending)
-                (when (zerop pending) (funcall finish)))
-              (lambda (_err)
-                (aset slots idx nil)
-                (cl-decf pending)
-                (when (zerop pending) (funcall finish))))))
-          (t (aset slots i nil)))))
-      (when (zerop pending) (funcall finish)))))
+         (fetches nil))
+    (cl-loop
+     for ref in refs
+     for i from 0
+     do
+     (let ((inline (plist-get ref :inline))
+           (url    (plist-get ref :url)))
+       (cond
+        (inline (aset slots i (xiiif-parse-annotation-page inline)))
+        (url    (push (cons i url) fetches)))))
+    (if (null fetches)
+        (funcall callback (apply #'append (append slots nil)))
+      (let* ((pending (length fetches))
+             (done nil)
+             (finish
+              (lambda ()
+                (unless done
+                  (setq done t)
+                  (funcall callback
+                           (apply #'append (append slots nil)))))))
+        (dolist (spec (nreverse fetches))
+          (let ((idx (car spec)))
+            (xiiif-api-fetch-json-async
+             (cdr spec)
+             (lambda (json)
+               (aset slots idx (xiiif-parse-annotation-page json))
+               (when (zerop (cl-decf pending)) (funcall finish)))
+             (lambda (_err)
+               (aset slots idx nil)
+               (when (zerop (cl-decf pending)) (funcall finish))))))))))
 
 (provide 'xiiif-annotations)
 ;;; xiiif-annotations.el ends here
