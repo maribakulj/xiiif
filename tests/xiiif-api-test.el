@@ -150,6 +150,35 @@ identical to the pure-Elisp reader on every bundled fixture."
       (should (equal "http://x/big.jpg" (nth 1 captured)))
       (should (equal '(999999 10) (nthcdr 2 captured))))))
 
+;;; ---- Retry-After exposure ----
+
+(ert-deftest xiiif-api--retry-after-seconds/shapes ()
+  (should (equal 120 (xiiif-api--retry-after-seconds "120")))
+  (should (equal 0 (xiiif-api--retry-after-seconds "0")))
+  ;; An HTTP date in the past clamps to 0.
+  (should (equal 0 (xiiif-api--retry-after-seconds
+                    "Wed, 21 Oct 2015 07:28:00 GMT")))
+  (should-not (xiiif-api--retry-after-seconds "soon"))
+  (should-not (xiiif-api--retry-after-seconds nil)))
+
+(ert-deftest xiiif-api--response-json/429-carries-retry-after ()
+  (xiiif-api-test--with-response
+   "HTTP/1.1 429 Too Many Requests\r\nRetry-After: 7\r\n\r\n{}"
+   (lambda ()
+     (let ((err (should-error (xiiif-api--response-json "http://x")
+                              :type 'xiiif-http-error)))
+       (should (equal '(xiiif-http-error "http://x" 429 :retry-after 7)
+                      err))))))
+
+(ert-deftest xiiif-api--response-json/error-without-retry-after ()
+  (xiiif-api-test--with-response
+   "HTTP/1.1 503 Service Unavailable\r\n\r\n{}"
+   (lambda ()
+     (let ((err (should-error (xiiif-api--response-json "http://x")
+                              :type 'xiiif-http-error)))
+       (should (equal '(xiiif-http-error "http://x" 503) err))))))
+
+
 (ert-deftest xiiif-api-error-hint/body-too-large ()
   (should (string-match-p
            "too large.*11 > 10 bytes"

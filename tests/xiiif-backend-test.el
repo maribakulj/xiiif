@@ -195,6 +195,24 @@ strings, and an unescaped ETag validator would be dropped by curl
     (should (eq 'xiiif-http-error (nth 0 captured)))
     (should (equal 304 (nth 2 captured)))))
 
+(ert-deftest xiiif-plz/429-carries-retry-after ()
+  (let ((captured nil))
+    (xiiif-backend-test--with-fake-plz
+        (lambda (_method _url &rest kw)
+          (funcall (plist-get kw :else)
+                   (xiiif-backend-test--err
+                    :response (xiiif-backend-test--resp
+                               :status 429
+                               :headers '((retry-after . "7")))))
+          'fake-process)
+      (xiiif-api-fetch-json-async
+       "http://x/m"
+       (lambda (_) (error "callback should not fire"))
+       (lambda (err) (setq captured err))))
+    (should (equal '(xiiif-http-error "http://x/m" 429 :retry-after 7)
+                   captured))))
+
+
 (ert-deftest xiiif-plz/curl-error-translated ()
   (let ((captured nil))
     (xiiif-backend-test--with-fake-plz

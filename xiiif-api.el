@@ -180,6 +180,25 @@ shapes as the pure-Elisp reader: alists with symbol keys, vectors,
            nil t)
       (match-string 1))))
 
+(defun xiiif-api--retry-after-seconds (value)
+  "Parse a Retry-After header VALUE into seconds, or nil.
+VALUE may be a delay in seconds or an HTTP date."
+  (when (stringp value)
+    (let ((trimmed (string-trim value)))
+      (cond
+       ((string-match-p "\\`[0-9]+\\'" trimmed)
+        (string-to-number trimmed))
+       (t (ignore-errors
+            (max 0 (- (float-time (date-to-time trimmed))
+                      (float-time)))))))))
+
+(defun xiiif-api--http-error-data (url status &optional retry-after)
+  "Build `xiiif-http-error' data for URL and STATUS.
+When RETRY-AFTER (seconds) is non-nil it is appended as a
+`:retry-after' pair so schedulers can honour the server's demand."
+  (append (list url status)
+          (and retry-after (list :retry-after retry-after))))
+
 (defun xiiif-api--check-body-size (url)
   "Signal `xiiif-body-too-large' when the response body is oversized.
 The current buffer must be a `url' response buffer.  The check only
@@ -228,7 +247,11 @@ fetches."
      ((eql status 304)
       (xiiif-api--cached-json-or-error url))
      ((and status (or (< status 200) (>= status 400)))
-      (signal 'xiiif-http-error (list url status)))
+      (signal 'xiiif-http-error
+              (xiiif-api--http-error-data
+               url status
+               (xiiif-api--retry-after-seconds
+                (xiiif-api--header-value "Retry-After")))))
      (t
       (xiiif-api--check-body-size url)
       (xiiif-api--warn-content-type url ct)
@@ -449,7 +472,12 @@ of cancellable handle, or nil when the URL was invalid."
                                           net-err))))
                      (let ((code (xiiif-api--status-code)))
                        (when (and code (or (< code 200) (>= code 400)))
-                         (signal 'xiiif-http-error (list url code))))
+                         (signal 'xiiif-http-error
+                                 (xiiif-api--http-error-data
+                                  url code
+                                  (xiiif-api--retry-after-seconds
+                                   (xiiif-api--header-value
+                                    "Retry-After"))))))
                      (xiiif-api--check-body-size url)
                      (xiiif-api--skip-headers)
                      (set-buffer-multibyte nil)
@@ -550,7 +578,12 @@ case nothing should be invoked."
          (curl   (plz-error-curl-error plz-err)))
     (cond
      ((xiiif-api--plz-cancelled-p plz-err) nil)
-     (status (list 'xiiif-http-error url status))
+     (status
+      (cons 'xiiif-http-error
+            (xiiif-api--http-error-data
+             url status
+             (xiiif-api--retry-after-seconds
+              (alist-get 'retry-after (plz-response-headers resp))))))
      (curl (list 'xiiif-network-error url
                  (or (cdr curl) (format "curl error %s" (car curl)))))
      (t (list 'xiiif-network-error url
