@@ -12,6 +12,8 @@
 ;;; Code:
 
 (require 'ert)
+(require 'cl-lib)
+(require 'json)
 (require 'xiiif-api)
 
 (defun xiiif-api-test--with-response (raw thunk)
@@ -59,6 +61,44 @@
    (lambda ()
      (let ((result (xiiif-api--response-json "http://x")))
        (should (eq t (alist-get 'ok result)))))))
+
+;;; ---- native JSON parser ----
+
+(defconst xiiif-api-test--examples-dir
+  (expand-file-name
+   "../examples"
+   (file-name-directory (or load-file-name buffer-file-name))))
+
+(ert-deftest xiiif-api--parse-json/native-matches-legacy-on-fixtures ()
+  "The native `json-parse-string' configuration must produce shapes
+identical to the pure-Elisp reader on every bundled fixture."
+  (skip-unless (fboundp 'json-parse-string))
+  (let ((fixtures (directory-files
+                   xiiif-api-test--examples-dir t "\\.json\\'")))
+    (should fixtures)
+    (dolist (file fixtures)
+      (let* ((body (with-temp-buffer
+                     (insert-file-contents file)
+                     (buffer-string)))
+             (native (xiiif-api--parse-json body file))
+             (legacy (let ((json-object-type 'alist)
+                           (json-array-type  'vector)
+                           (json-key-type    'symbol)
+                           (json-false       :json-false)
+                           (json-null        nil))
+                       (json-read-from-string body))))
+        (should (equal native legacy))))))
+
+(ert-deftest xiiif-api--parse-json/shapes ()
+  "Objects are symbol-keyed alists, arrays vectors, false/null mapped."
+  (let ((parsed (xiiif-api--parse-json
+                 "{\"a\": [1, 2], \"b\": false, \"c\": null, \"d\": \"x\"}"
+                 "http://x")))
+    (should (equal [1 2] (alist-get 'a parsed)))
+    (should (eq :json-false (alist-get 'b parsed)))
+    (should (null (alist-get 'c parsed)))
+    (should (equal "x" (alist-get 'd parsed)))))
+
 
 (ert-deftest xiiif-api-fetch-json-async/invalid-url-calls-errback ()
   (let (captured)
