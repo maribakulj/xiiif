@@ -19,6 +19,7 @@
 (require 'cl-lib)
 (require 'xiiif-core)
 (require 'xiiif-api)
+(require 'xiiif-fetch)
 
 (cl-defstruct xiiif-annotation
   "Normalized IIIF Web Annotation (W3C)."
@@ -135,11 +136,12 @@ the count to zero while later fetches are still waiting to start."
                            (apply #'append (append slots nil)))))))
         (dolist (spec (nreverse fetches))
           (let ((idx (car spec)))
-            (xiiif-api-fetch-json-async
+            (xiiif-fetch-json
              (cdr spec)
              (lambda (json)
                (aset slots idx (xiiif-parse-annotation-page json))
                (when (zerop (cl-decf pending)) (funcall finish)))
+             :errback
              (lambda (_err)
                (aset slots idx nil)
                (when (zerop (cl-decf pending)) (funcall finish))))))))))

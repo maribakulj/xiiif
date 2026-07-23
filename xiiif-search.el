@@ -22,6 +22,7 @@
 (require 'tabulated-list)
 (require 'xiiif-core)
 (require 'xiiif-api)
+(require 'xiiif-fetch)
 (require 'xiiif-cache)
 
 (defconst xiiif-search--buffer "*XIIIF Search*")
@@ -120,11 +121,11 @@ On success, CALLBACK receives the list of `xiiif-search-hit' structs.
 On failure, ERRBACK (defaulting to the standard xiiif reporter)
 receives (ERROR-SYMBOL URL &rest DATA)."
   (let ((url (xiiif-search--url service-id query)))
-    (xiiif-api-fetch-json-async
+    (xiiif-fetch-json
      url
      (lambda (json)
        (funcall callback (xiiif-search--parse json)))
-     errback)))
+     :errback errback)))
 
 
 ;;; ---------- UI ----------

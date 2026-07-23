@@ -50,6 +50,7 @@
 (require 'xiiif-profiles)
 (require 'xiiif-http-cache)
 (require 'xiiif-api)
+(require 'xiiif-fetch)
 (require 'xiiif-core)
 (require 'xiiif-cache)
 (require 'xiiif-image)
@@ -124,9 +125,10 @@ Falls back to `xiiif-current-canvas' when no buffer context applies."
 The right callback is chosen by `xiiif-resource-kind'.  If JSON is
 neither a Manifest nor a Collection, a message is shown and no
 callback is invoked.  Errors are reported via `message'.
-Returns the `xiiif-api-fetch-json-async' handle for cancellation."
+Goes through the `xiiif-fetch' scheduler; returns a request object
+for `xiiif-fetch-cancel'."
   (message "xiiif: fetching %s..." url)
-  (xiiif-api-fetch-json-async
+  (xiiif-fetch-json
    url
    (lambda (json)
      (condition-case err
@@ -145,14 +147,15 @@ Returns the `xiiif-api-fetch-json-async' handle for cancellation."
                  url (error-message-string err)))))))
 
 (defvar-local xiiif--inflight nil
-  "`xiiif-api' handle of the in-flight request tied to this buffer, or nil.
+  "Cancellable handle of the in-flight request tied to this buffer, or nil.
+A `xiiif-fetch' request object (or a raw transport handle).
 Populated by `xiiif-refresh' so a subsequent refresh can cancel the
 previous request.")
 
 (defun xiiif--cancel-inflight ()
   "Cancel the request tracked by `xiiif--inflight' in the current buffer."
   (when xiiif--inflight
-    (xiiif-api-cancel xiiif--inflight)
+    (xiiif-fetch-cancel xiiif--inflight)
     (setq xiiif--inflight nil)))
 
 

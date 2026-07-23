@@ -27,6 +27,7 @@
 
 (require 'xiiif-core)
 (require 'xiiif-api)
+(require 'xiiif-fetch)
 (require 'xiiif-cache)
 (require 'xiiif-image)
 (require 'xiiif-annotations)
@@ -362,7 +363,7 @@ bumps the generation this closure captures."
                        'xiiif-ui--thumbnail-generation buffer)))
       (when url
         (let ((handle
-               (xiiif-api-fetch-bytes-async
+               (xiiif-fetch-bytes
                 url
                 (lambda (bytes)
                   (when (and (buffer-live-p buffer)
@@ -380,7 +381,8 @@ bumps the generation this closure captures."
                              (insert
                               (propertize "(could not render thumbnail)"
                                           'face 'xiiif-hint)))))))))
-                (lambda (_err) nil))))
+                :errback (lambda (_err) nil)
+                :cache t)))
           (when (buffer-live-p buffer)
             (with-current-buffer buffer
               (setq xiiif-ui--thumbnail-inflight handle))))))))
@@ -393,7 +395,7 @@ fetches a small preview asynchronously and inserts it at the end."
         (service (xiiif-canvas-image-service canvas))
         thumb-marker)
     (with-current-buffer buf
-      (xiiif-api-cancel xiiif-ui--thumbnail-inflight)
+      (xiiif-fetch-cancel xiiif-ui--thumbnail-inflight)
       (setq xiiif-ui--thumbnail-inflight nil)
       (cl-incf xiiif-ui--thumbnail-generation)
       (xiiif-canvas-mode)

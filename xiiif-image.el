@@ -27,6 +27,7 @@
 (require 'subr-x)
 (require 'xiiif-core)
 (require 'xiiif-api)
+(require 'xiiif-fetch)
 (require 'xiiif-profiles)
 
 (defcustom xiiif-image-default-region "full"
@@ -149,11 +150,11 @@ same way as `xiiif-image-url'."
     (if (not url)
         (funcall (or errback #'xiiif-api--default-errback)
                  (list 'xiiif-error nil "no image service"))
-      (xiiif-api-download-file-async
+      (xiiif-fetch-file
        url
        (expand-file-name destination)
        callback
-       errback))))
+       :errback errback))))
 
 
 
@@ -246,11 +247,11 @@ defaults to the same reporter used by `xiiif-api-fetch-json-async'."
     (if (not url)
         (funcall (or errback #'xiiif-api--default-errback)
                  (list 'xiiif-error nil "no info.json URL"))
-      (xiiif-api-fetch-json-async
+      (xiiif-fetch-json
        url
        (lambda (json)
          (funcall callback (xiiif-image-parse-info json url)))
-       errback))))
+       :errback errback))))
 
 (provide 'xiiif-image)
 ;;; xiiif-image.el ends here

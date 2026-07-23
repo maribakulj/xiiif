@@ -105,6 +105,8 @@ re-rendered is dropped and the stale fetch cancelled (regression:
 the marker collapsed to `point-min' after `erase-buffer' and the
 image landed at the top of the new content)."
   (let ((xiiif-ui-show-thumbnails t)
+        (xiiif-fetch-host-interval 0)
+        (xiiif-image-cache-enabled nil)
         (captured nil)              ; (URL CALLBACK HANDLE), newest first
         (cancelled nil))
     (cl-letf (((symbol-function 'display-graphic-p)
@@ -124,12 +126,14 @@ image landed at the top of the new content)."
               (should (= 2 (length captured)))
               (pcase-let ((`(,_ ,cb2 ,h2) (nth 0 captured))
                           (`(,_ ,cb1 ,h1) (nth 1 captured)))
-                ;; The re-render cancelled the first fetch and stored
-                ;; the handle of the new one.
+                ;; The re-render cancelled the first fetch (down to
+                ;; its transport handle) and stored the scheduler
+                ;; request wrapping the new one.
                 (should (memq h1 cancelled))
-                (should (eq h2 (buffer-local-value
-                                'xiiif-ui--thumbnail-inflight
-                                (get-buffer xiiif-ui--canvas-buffer))))
+                (should (eq h2 (xiiif-fetch--request-handle
+                                (buffer-local-value
+                                 'xiiif-ui--thumbnail-inflight
+                                 (get-buffer xiiif-ui--canvas-buffer)))))
                 ;; Late response from the first render: no insertion.
                 ;; (The fake bytes cannot be decoded, so an accepted
                 ;; response always shows the fallback text.)
@@ -148,6 +152,7 @@ image landed at the top of the new content)."
                    (search-forward "could not render thumbnail" nil t))
                   (should-not
                    (search-forward "could not render thumbnail" nil t)))))
+          (xiiif-fetch-reset)
           (dolist (entry captured)
             (when (buffer-live-p (nth 2 entry))
               (kill-buffer (nth 2 entry)))))))))

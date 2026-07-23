@@ -20,6 +20,7 @@
 (require 'url)
 (require 'xiiif-core)
 (require 'xiiif-api)
+(require 'xiiif-fetch)
 
 (defcustom xiiif-ocr-extract-text t
   "When non-nil, strip ALTO/hOCR markup to plain text on display."
@@ -155,7 +156,7 @@ ERRBACK receives (ERROR-SYMBOL URL &rest DATA) using the same shape
 as the rest of `xiiif-api'."
   (let ((url (plist-get ref :url))
         (format (plist-get ref :format)))
-    (xiiif-api-fetch-bytes-async
+    (xiiif-fetch-bytes
      url
      (lambda (bytes)
        (let* ((body (if (multibyte-string-p bytes)
@@ -166,7 +167,7 @@ as the rest of `xiiif-api'."
                       body)))
          (funcall callback
                   (append ref (list :body body :text text)))))
-     errback)))
+     :errback errback)))
 
 (provide 'xiiif-ocr)
 ;;; xiiif-ocr.el ends here

@@ -41,7 +41,8 @@ HTTP/1.1 200 response.  Returns a temp buffer as handle."
   "Install the stub `url-retrieve' and run BODY with FIXTURES."
   (declare (indent 1) (debug (form body)))
   `(let ((xiiif-download-test--fixtures ,fixtures)
-         (xiiif-api-backend 'url))
+         (xiiif-api-backend 'url)
+         (xiiif-fetch-host-interval 0))
      (cl-letf (((symbol-function 'url-retrieve)
                 #'xiiif-download-test--stub))
        ,@body)))

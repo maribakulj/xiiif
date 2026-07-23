@@ -133,13 +133,19 @@ File downloads are never deduplicated."
 
 (defun xiiif-fetch-cancel (request)
   "Cancel REQUEST entirely; none of its callbacks will be invoked.
-Safe to call with nil or an already-finished request."
-  (when (xiiif-fetch--request-p request)
+REQUEST is normally a scheduler request object; for convenience a
+raw transport handle from the xiiif-api layer is forwarded to
+`xiiif-api-cancel', so callers holding either kind can use this
+one entry point.  Safe to call with nil or an already-finished
+request."
+  (cond
+   ((xiiif-fetch--request-p request)
     (setq xiiif-fetch--queue (delq request xiiif-fetch--queue))
     (when (memq request xiiif-fetch--active)
       (setq xiiif-fetch--active (delq request xiiif-fetch--active))
       (xiiif-api-cancel (xiiif-fetch--request-handle request)))
-    (xiiif-fetch--pump)))
+    (xiiif-fetch--pump))
+   (request (xiiif-api-cancel request))))
 
 (defun xiiif-fetch-cancel-group (group)
   "Cancel every queued or in-flight request tagged with GROUP.
