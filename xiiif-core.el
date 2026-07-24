@@ -19,11 +19,42 @@
 
 (require 'cl-lib)
 (require 'subr-x)
+(require 'seq)
 (require 'xiiif-errors)
 
-(defcustom xiiif-preferred-languages '("en" "none" "und")
+(defconst xiiif--base-preferred-languages '("en" "none" "und")
+  "Language tags always tried when resolving IIIF language maps.")
+
+(defun xiiif--locale-language ()
+  "Return a two-letter language code from the locale environment, or nil.
+Reads `LC_ALL', `LC_MESSAGES' then `LANG' and extracts the leading
+language subtag (e.g. \"fr\" from \"fr_FR.UTF-8\")."
+  (let ((locale (seq-find (lambda (s) (and s (not (string-empty-p s))))
+                          (list (getenv "LC_ALL")
+                                (getenv "LC_MESSAGES")
+                                (getenv "LANG")))))
+    (when (and locale
+               (string-match "\\`\\([[:alpha:]]\\{2,3\\}\\)\\(?:[_.@-]\\|\\'\\)"
+                             locale))
+      (let ((code (downcase (match-string 1 locale))))
+        (unless (member code '("c" "posix"))
+          code)))))
+
+(defun xiiif--default-preferred-languages ()
+  "Return the default `xiiif-preferred-languages', locale first.
+The locale's language subtag is prepended to
+`xiiif--base-preferred-languages' when it is not already present, so
+a francophone user gets French labels ahead of English by default."
+  (let ((lang (xiiif--locale-language)))
+    (if (and lang (not (member lang xiiif--base-preferred-languages)))
+        (cons lang xiiif--base-preferred-languages)
+      xiiif--base-preferred-languages)))
+
+(defcustom xiiif-preferred-languages (xiiif--default-preferred-languages)
   "Preferred language tags when resolving IIIF language maps.
-The first tag for which a value is present wins."
+The first tag for which a value is present wins.  The default is
+derived from the locale (see `xiiif--default-preferred-languages'):
+the locale's language, then English, `none' and `und'."
   :type '(repeat string)
   :group 'xiiif)
 
