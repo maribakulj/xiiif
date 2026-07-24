@@ -19,6 +19,7 @@
 (require 'cl-lib)
 (require 'url)
 (require 'xiiif-core)
+(require 'xiiif-region)
 (require 'xiiif-api)
 (require 'xiiif-fetch)
 
@@ -142,6 +143,45 @@ FORMAT is `alto', `hocr' or anything else (returned verbatim)."
     ('alto (xiiif-ocr--extract-alto body))
     ('hocr (xiiif-ocr--extract-hocr body))
     (_ body)))
+
+
+;;; ---------- ALTO word boxes ----------
+
+(defun xiiif-ocr--alto-attr (tag name)
+  "Return the value of attribute NAME in the ALTO element TAG, or nil."
+  (and (string-match (format "\\b%s=\"\\([^\"]*\\)\"" name) tag)
+       (match-string 1 tag)))
+
+(defun xiiif-ocr--alto-attr-num (tag name)
+  "Return attribute NAME of TAG as a rounded integer, or nil."
+  (when-let ((s (xiiif-ocr--alto-attr tag name)))
+    (and (string-match-p "\\`[0-9]+\\(?:\\.[0-9]+\\)?\\'" s)
+         (round (string-to-number s)))))
+
+(defun xiiif-ocr-alto-boxes (xml)
+  "Return a list of (STRING . REGION) for every ALTO <String> in XML.
+REGION is a `xiiif-region' in the ALTO coordinate space, built from
+the HPOS/VPOS/WIDTH/HEIGHT attributes; entries missing any of those
+or the CONTENT are skipped.  Meant to back a future text-to-region
+overlay; the plain-text extraction of `xiiif-ocr--extract-alto' is
+unaffected."
+  (let ((boxes nil))
+    (with-temp-buffer
+      (insert xml)
+      (goto-char (point-min))
+      (while (re-search-forward "<String\\b[^>]*>" nil t)
+        (let* ((tag (match-string 0))
+               (content (xiiif-ocr--alto-attr tag "CONTENT"))
+               (hpos (xiiif-ocr--alto-attr-num tag "HPOS"))
+               (vpos (xiiif-ocr--alto-attr-num tag "VPOS"))
+               (width (xiiif-ocr--alto-attr-num tag "WIDTH"))
+               (height (xiiif-ocr--alto-attr-num tag "HEIGHT")))
+          (when (and content hpos vpos width height)
+            (push (cons content
+                        (make-xiiif-region :x hpos :y vpos
+                                           :w width :h height))
+                  boxes)))))
+    (nreverse boxes)))
 
 
 ;;; ---------- async fetch + extract ----------
