@@ -36,6 +36,10 @@
 (require 'xiiif-region)
 (require 'xiiif-image)
 (require 'xiiif-fetch)
+(require 'xiiif-anchor)
+
+;; Defined in xiiif.el; referenced lazily for the Mirador handoff.
+(defvar xiiif-mirador-base-url)
 
 (cl-defstruct xiiif-view-state
   "A view onto a canvas region.
@@ -479,6 +483,9 @@ rescaled stand-in during zoom."
     (dolist (k '("+" "=")) (define-key map (kbd k) #'xiiif-view-zoom-in))
     (define-key map (kbd "-") #'xiiif-view-zoom-out)
     (define-key map (kbd "0") #'xiiif-view-zoom-reset)
+    (define-key map (kbd "y") #'xiiif-view-copy-url)
+    (define-key map (kbd "M") #'xiiif-view-open-in-mirador)
+    (define-key map (kbd "a") #'xiiif-view-annotate)
     (define-key map (kbd "g") #'xiiif-view-refresh)
     (define-key map (kbd "q") #'quit-window)
     map)
@@ -558,6 +565,43 @@ rescaled stand-in during zoom."
   (xiiif-view--navigate xiiif-view--state))
 
 
+;;; ---- anchor + output commands ----
+
+(defun xiiif-view-state-to-anchor (state)
+  "Return the canonical anchor for the current view STATE."
+  (xiiif-anchor-create
+   :manifest (xiiif-view-state-manifest-url state)
+   :canvas   (xiiif-view-state-canvas-id state)
+   :region   (xiiif-view-state-region state)))
+
+(defun xiiif-view-copy-url ()
+  "Copy the Image API URL of the exact current view to the kill ring."
+  (interactive)
+  (let ((url (xiiif-view--url xiiif-view--state)))
+    (kill-new url)
+    (message "Copied %s" url)))
+
+(defun xiiif-view-open-in-mirador ()
+  "Open the current view's canvas+region in an external Mirador viewer."
+  (interactive)
+  (let ((url (xiiif-content-state-url
+              (xiiif-view-state-to-anchor xiiif-view--state))))
+    (browse-url url)
+    (message "xiiif: opening region in Mirador")))
+
+(defvar xiiif-view-annotate-function nil
+  "Function called by `xiiif-view-annotate' with the current anchor.
+Wired by the anchored-note layer (Spec C3); nil means unconfigured.")
+
+(defun xiiif-view-annotate ()
+  "Create an anchored note for the current view via the note backend."
+  (interactive)
+  (if (functionp xiiif-view-annotate-function)
+      (funcall xiiif-view-annotate-function
+               (xiiif-view-state-to-anchor xiiif-view--state))
+    (user-error "Anchored notes are not configured yet")))
+
+
 ;;; ---- entry ----
 
 (defun xiiif-view-region (state &optional service info)
@@ -573,10 +617,87 @@ supplying dimensions, zoom scales and compliance."
             xiiif-view--lru nil
             xiiif-view--image nil
             xiiif-view--group nil
-            xiiif-view--generation 0)
-      (xiiif-view--navigate state))
+            xiiif-view--generation 0))
     (pop-to-buffer-same-window buf)
+    (with-current-buffer buf
+      (xiiif-view--navigate state))
     buf))
+
+(defun xiiif-view--region-pixels (region info)
+  "Return REGION as a pixel (X Y W H) list, converting percent via INFO."
+  (if (and (eq (xiiif-region-unit region) 'percent)
+           info (xiiif-image-info-width info) (xiiif-image-info-height info))
+      (let ((fw (xiiif-image-info-width info))
+            (fh (xiiif-image-info-height info)))
+        (list (round (* (/ (xiiif-region-x region) 100.0) fw))
+              (round (* (/ (xiiif-region-y region) 100.0) fh))
+              (round (* (/ (xiiif-region-w region) 100.0) fw))
+              (round (* (/ (xiiif-region-h region) 100.0) fh))))
+    (list (xiiif-region-x region) (xiiif-region-y region)
+          (xiiif-region-w region) (xiiif-region-h region))))
+
+(defun xiiif-view--level-for-region (info win-w win-h region-w region-h)
+  "Return the highest zoom level whose fitted region still covers REGION."
+  (let* ((scales (xiiif-view-scales info))
+         (limit (min (/ (float win-w) (max 1 region-w))
+                     (/ (float win-h) (max 1 region-h))))
+         (best 0))
+    (dotimes (i (length scales))
+      (when (<= (nth i scales) limit) (setq best i)))
+    best))
+
+(defun xiiif-view--initial-state (manifest-url canvas-id info region win-w win-h)
+  "Build the fitted initial view-state.
+REGION (a `xiiif-region' or nil) focuses the view; nil starts from
+the whole canvas.  WIN-W/WIN-H are the display area in pixels."
+  (if region
+      (let* ((px (xiiif-view--region-pixels region info))
+             (rw (max 1 (nth 2 px)))
+             (rh (max 1 (nth 3 px)))
+             (level (xiiif-view--level-for-region info win-w win-h rw rh)))
+        (xiiif-view-fit-region
+         (make-xiiif-view-state :manifest-url manifest-url :canvas-id canvas-id
+                                :x (nth 0 px) :y (nth 1 px) :w rw :h rh
+                                :level level)
+         info win-w win-h))
+    (let ((full-w (or (and info (xiiif-image-info-width info)) win-w))
+          (full-h (or (and info (xiiif-image-info-height info)) win-h)))
+      (xiiif-view-fit-region
+       (make-xiiif-view-state :manifest-url manifest-url :canvas-id canvas-id
+                              :x 0 :y 0 :w full-w :h full-h :level 0)
+       info win-w win-h))))
+
+(defun xiiif-view-open (manifest-url canvas-id service info &optional region)
+  "Create the region viewer for CANVAS-ID and select it.
+SERVICE is its `xiiif-image-service', INFO the parsed info.json.
+REGION, when non-nil, focuses the initial view."
+  (let ((buf (get-buffer-create xiiif-view--buffer)))
+    (with-current-buffer buf
+      (xiiif-view-mode)
+      (setq xiiif-view--service service
+            xiiif-view--info info
+            xiiif-view--lru nil
+            xiiif-view--image nil
+            xiiif-view--group nil
+            xiiif-view--generation 0))
+    (pop-to-buffer-same-window buf)
+    (with-current-buffer buf
+      (let ((win (xiiif-view--window-pixels)))
+        (xiiif-view--navigate
+         (xiiif-view--initial-state manifest-url canvas-id info region
+                                    (car win) (cdr win)))))
+    buf))
+
+(defun xiiif-view-load-canvas (manifest-url canvas-id service &optional region)
+  "Fetch SERVICE's info.json, then open the viewer (focused on REGION).
+Asynchronous; used by the interactive entry points."
+  (message "xiiif: loading view...")
+  (xiiif-image-fetch-info-async
+   service
+   (lambda (info)
+     (xiiif-view-open manifest-url canvas-id service info region))
+   (lambda (err)
+     (message "xiiif: %s" (xiiif-api-error-hint err)))))
 
 (provide 'xiiif-view)
 ;;; xiiif-view.el ends here

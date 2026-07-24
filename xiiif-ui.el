@@ -154,6 +154,7 @@
   (let ((map (make-sparse-keymap)))
     (define-key map (kbd "RET") #'xiiif-ui--open-canvas-at-point)
     (define-key map (kbd "o")   #'xiiif-ui--open-canvas-at-point)
+    (define-key map (kbd "v")   #'xiiif-view-canvas)
     (define-key map (kbd "y")   #'xiiif-ui--copy-image-url-at-point)
     (define-key map (kbd "d")   #'xiiif-ui--download-image-at-point)
     (define-key map (kbd "i")   #'xiiif-ui--insert-org-link-at-point)
@@ -311,6 +312,7 @@
   (let ((map (make-sparse-keymap)))
     (define-key map (kbd "y")   #'xiiif-copy-image-url)
     (define-key map (kbd "d")   #'xiiif-download-image)
+    (define-key map (kbd "v")   #'xiiif-view-canvas)
     (define-key map (kbd "i")   #'xiiif-insert-org-link)
     (define-key map (kbd "I")   #'xiiif-show-info-json)
     (define-key map (kbd "a")   #'xiiif-show-annotations)
@@ -404,7 +406,7 @@ fetches a small preview asynchronously and inserts it at the end."
       (let ((inhibit-read-only t))
         (erase-buffer)
         (xiiif-ui--insert-hints
-         '(("y" . "copy URL") ("d" . "download")
+         '(("v" . "view") ("y" . "copy URL") ("d" . "download")
            ("i" . "org link") ("I" . "info.json")
            ("J" . "raw JSON") ("q" . "quit")))
         (xiiif-ui--insert-heading (xiiif-canvas-title canvas))
@@ -774,6 +776,11 @@ The actual transfer runs asynchronously so Emacs stays responsive."
 (declare-function xiiif-refresh "xiiif")
 (declare-function xiiif-show-raw-json "xiiif")
 (declare-function xiiif-show-structures "xiiif")
+(declare-function xiiif-view-canvas "xiiif" (&optional canvas))
+(declare-function xiiif-open-canvas "xiiif" (&optional canvas))
+(declare-function xiiif-view-load-canvas "xiiif-view"
+                  (manifest-url canvas-id service &optional region))
+(defvar xiiif-current-manifest)
 
 (defun xiiif-ui--info-refresh ()
   "Re-fetch the current info.json."
@@ -808,6 +815,8 @@ The actual transfer runs asynchronously so Emacs stays responsive."
 (defvar xiiif-annotations-mode-map
   (let ((map (make-sparse-keymap)))
     (define-key map (kbd "g") #'xiiif-ui--annotations-refresh)
+    (define-key map (kbd "RET") #'xiiif-ui--annotation-view-at-point)
+    (define-key map (kbd "v") #'xiiif-ui--annotation-view-at-point)
     (define-key map (kbd "J") #'xiiif-show-raw-json)
     (define-key map (kbd "q") #'quit-window)
     map)
@@ -825,18 +834,24 @@ The actual transfer runs asynchronously so Emacs stays responsive."
   "List of `xiiif-annotation' rendered in the current buffer.")
 
 (defun xiiif-ui--insert-annotation (a)
-  "Insert one `xiiif-annotation' A into the current buffer."
-  (xiiif-ui--insert-field "Motivation" (xiiif-annotation-motivation a))
-  (xiiif-ui--insert-field "Target"     (xiiif-annotation-target a))
-  (xiiif-ui--insert-field "Region"
-                          (xiiif-region-to-string (xiiif-annotation-region a)))
-  (xiiif-ui--insert-field "Type"       (xiiif-annotation-body-type a))
-  (xiiif-ui--insert-field "Language"   (xiiif-annotation-body-lang a))
-  (when-let ((val (xiiif-annotation-body-value a)))
-    (insert "\n")
-    (insert val)
-    (unless (string-suffix-p "\n" val) (insert "\n")))
-  (insert (make-string 40 ?-) "\n"))
+  "Insert one `xiiif-annotation' A into the current buffer.
+When A carries a region, the whole block is tagged with it so `RET'
+can open the region viewer there."
+  (let ((start (point)))
+    (xiiif-ui--insert-field "Motivation" (xiiif-annotation-motivation a))
+    (xiiif-ui--insert-field "Target"     (xiiif-annotation-target a))
+    (xiiif-ui--insert-field "Region"
+                            (xiiif-region-to-string (xiiif-annotation-region a)))
+    (xiiif-ui--insert-field "Type"       (xiiif-annotation-body-type a))
+    (xiiif-ui--insert-field "Language"   (xiiif-annotation-body-lang a))
+    (when-let ((val (xiiif-annotation-body-value a)))
+      (insert "\n")
+      (insert val)
+      (unless (string-suffix-p "\n" val) (insert "\n")))
+    (insert (make-string 40 ?-) "\n")
+    (when (xiiif-annotation-region a)
+      (put-text-property start (point) 'xiiif-annotation-region
+                         (xiiif-annotation-region a)))))
 
 (defun xiiif-ui-render-annotations (canvas annotations)
   "Render ANNOTATIONS (list of `xiiif-annotation') for CANVAS.
@@ -868,6 +883,22 @@ ANNOTATIONS may be empty; the buffer still opens with a diagnostic."
   (unless xiiif-ui--annotations-canvas
     (user-error "No annotations context to refresh"))
   (xiiif-show-annotations xiiif-ui--annotations-canvas))
+
+(defun xiiif-ui--annotation-view-at-point ()
+  "Open the region viewer on the annotation at point, if it has a region.
+Falls back to the canvas detail buffer without a region or off a
+graphic display."
+  (interactive)
+  (let ((region (get-text-property (point) 'xiiif-annotation-region))
+        (canvas xiiif-ui--annotations-canvas))
+    (unless canvas (user-error "No annotation canvas in this buffer"))
+    (let ((service (xiiif-canvas-image-service canvas)))
+      (if (and region service (display-graphic-p))
+          (xiiif-view-load-canvas
+           (and (bound-and-true-p xiiif-current-manifest)
+                (xiiif-manifest-url xiiif-current-manifest))
+           (xiiif-canvas-id canvas) service region)
+        (xiiif-open-canvas canvas)))))
 
 
 ;;; ---------- OCR sidecar ----------

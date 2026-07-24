@@ -432,5 +432,115 @@ Binds `fetched' (list of (URL PRIORITY) submitted, newest first) and
       (should (search-forward "graphic display" nil t))
       (should (search-forward "https://img/svc/" nil t)))))
 
+;;; ---- commands: anchor, copy-url, annotate ----
+
+(ert-deftest xiiif-view/state-to-anchor ()
+  (let* ((state (make-xiiif-view-state
+                 :manifest-url "https://x/m" :canvas-id "https://x/c/1"
+                 :x 10 :y 20 :w 30 :h 40 :level 1))
+         (anchor (xiiif-view-state-to-anchor state)))
+    (should (equal "https://x/m" (xiiif-anchor-manifest anchor)))
+    (should (equal "https://x/c/1" (xiiif-anchor-canvas anchor)))
+    (should (= 10 (xiiif-region-x (xiiif-anchor-region anchor))))))
+
+(ert-deftest xiiif-view/copy-url ()
+  (with-temp-buffer
+    (rename-buffer xiiif-view--buffer t)
+    (xiiif-view-mode)
+    (setq xiiif-view--info (xiiif-view-test--info "sample-info.json")
+          xiiif-view--service (make-xiiif-image-service :id "https://img/svc")
+          xiiif-view--state (make-xiiif-view-state
+                             :x 10 :y 20 :w 100 :h 100
+                             :level (xiiif-view-max-level
+                                     (xiiif-view-test--info "sample-info.json"))))
+    (let ((kill-ring nil))
+      (cl-letf (((symbol-function 'frame-scale-factor) (lambda (&rest _) 1)))
+        (xiiif-view-copy-url))
+      (should (string-prefix-p "https://img/svc/10,20,100,100/"
+                               (current-kill 0))))))
+
+(ert-deftest xiiif-view/annotate-unconfigured-signals ()
+  (with-temp-buffer
+    (xiiif-view-mode)
+    (setq xiiif-view--state (make-xiiif-view-state :x 0 :y 0 :w 10 :h 10)
+          xiiif-view-annotate-function nil)
+    (should-error (xiiif-view-annotate) :type 'user-error)))
+
+(ert-deftest xiiif-view/annotate-calls-backend ()
+  (with-temp-buffer
+    (xiiif-view-mode)
+    (let ((got nil))
+      (setq xiiif-view--state (make-xiiif-view-state
+                               :manifest-url "m" :canvas-id "c"
+                               :x 1 :y 2 :w 3 :h 4)
+            xiiif-view-annotate-function (lambda (anchor) (setq got anchor)))
+      (xiiif-view-annotate)
+      (should (xiiif-anchor-p got))
+      (should (equal "c" (xiiif-anchor-canvas got))))))
+
+(ert-deftest xiiif-view/mode-map-bindings ()
+  (should (eq 'xiiif-view-copy-url
+              (lookup-key xiiif-view-mode-map (kbd "y"))))
+  (should (eq 'xiiif-view-open-in-mirador
+              (lookup-key xiiif-view-mode-map (kbd "M"))))
+  (should (eq 'xiiif-view-annotate
+              (lookup-key xiiif-view-mode-map (kbd "a"))))
+  (should (eq 'xiiif-view-pan-left
+              (lookup-key xiiif-view-mode-map (kbd "h"))))
+  (should (eq 'xiiif-view-zoom-in
+              (lookup-key xiiif-view-mode-map (kbd "+")))))
+
+
+;;; ---- initial state building ----
+
+(ert-deftest xiiif-view/initial-state-whole-canvas ()
+  (let* ((info (xiiif-view-test--info "sample-info.json")) ; 6000x4000
+         (state (xiiif-view--initial-state "m" "c" info nil 800 600)))
+    (should (= 0 (xiiif-view-state-level state)))
+    (should (equal "m" (xiiif-view-state-manifest-url state)))))
+
+(ert-deftest xiiif-view/initial-state-focuses-region ()
+  "A region-focused initial state picks a level whose fitted region
+covers the region and centres on it."
+  (let* ((info (xiiif-view-test--info "sample-info.json"))
+         (region (make-xiiif-region :x 1000 :y 1000 :w 400 :h 300))
+         (state (xiiif-view--initial-state "m" "c" info region 800 600)))
+    ;; The fitted region must contain the target region's centre.
+    (let ((cx (+ (xiiif-view-state-x state) (/ (xiiif-view-state-w state) 2)))
+          (cy (+ (xiiif-view-state-y state) (/ (xiiif-view-state-h state) 2))))
+      (should (< (abs (- cx 1200)) 50))
+      (should (< (abs (- cy 1150)) 50)))))
+
+(ert-deftest xiiif-view/initial-state-percent-region ()
+  "A percent region is converted to pixels via the info dimensions."
+  (let* ((info (xiiif-view-test--info "sample-info.json")) ; 6000x4000
+         (region (make-xiiif-region :x 10 :y 10 :w 20 :h 20 :unit 'percent))
+         (px (xiiif-view--region-pixels region info)))
+    ;; 10% of 6000 = 600, 20% of 6000 = 1200.
+    (should (equal '(600 400 1200 800) px))))
+
+(ert-deftest xiiif-view/open-focuses-region ()
+  "xiiif-view-open builds a viewer focused on the given region."
+  (cl-letf (((symbol-function 'display-graphic-p) (lambda (&rest _) t))
+            ((symbol-function 'frame-scale-factor) (lambda (&rest _) 1))
+            ((symbol-function 'xiiif-view--render) #'ignore)
+            ((symbol-function 'xiiif-fetch-cancel-group) #'ignore)
+            ((symbol-function 'pop-to-buffer-same-window) #'ignore))
+    (let ((info (xiiif-view-test--info "sample-info.json"))
+          (region (make-xiiif-region :x 2000 :y 1500 :w 200 :h 200)))
+      (unwind-protect
+          (progn
+            (xiiif-view-open "https://x/m" "https://x/c/1"
+                             (make-xiiif-image-service :id "https://img/svc")
+                             info region)
+            (with-current-buffer xiiif-view--buffer
+              (let ((cx (+ (xiiif-view-state-x xiiif-view--state)
+                           (/ (xiiif-view-state-w xiiif-view--state) 2))))
+                (should (< (abs (- cx 2100)) 60))
+                (should (equal "https://x/c/1"
+                               (xiiif-view-state-canvas-id xiiif-view--state))))))
+        (when (get-buffer xiiif-view--buffer)
+          (kill-buffer xiiif-view--buffer))))))
+
 (provide 'xiiif-view-test)
 ;;; xiiif-view-test.el ends here

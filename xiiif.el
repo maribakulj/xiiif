@@ -230,6 +230,27 @@ prompt and a URL template.  The built URL is handed off to
     (xiiif-ui-render-canvas target)))
 
 ;;;###autoload
+(defun xiiif-view-canvas (&optional canvas)
+  "Open the step-by-step region viewer on CANVAS.
+CANVAS defaults to the canvas at point or the current canvas.  Off a
+graphic display, or when the canvas exposes no Image API service,
+falls back to the canvas detail buffer."
+  (interactive)
+  (let* ((canvas (or canvas (xiiif--require-canvas)))
+         (service (xiiif-canvas-image-service canvas)))
+    (cond
+     ((not service)
+      (xiiif-open-canvas canvas)
+      (message "xiiif: canvas has no Image API service; opened detail view"))
+     ((not (display-graphic-p))
+      (xiiif-open-canvas canvas)
+      (message "xiiif: no graphic display; opened canvas detail"))
+     (t
+      (xiiif-view-load-canvas
+       (and xiiif-current-manifest (xiiif-manifest-url xiiif-current-manifest))
+       (xiiif-canvas-id canvas) service)))))
+
+;;;###autoload
 (defun xiiif-copy-image-url (&optional with-options)
   "Copy an IIIF Image API URL for the contextual canvas.
 
@@ -630,12 +651,12 @@ when no manifest is loaded."
 
 (defun xiiif--open-anchor (anchor)
   "Navigate to the location described by ANCHOR.
-Opens the canvas detail buffer for the anchored canvas, loading the
-manifest first when it is not the current one.  A region carried by
-ANCHOR is preserved for the region viewer (Spec B) but does not yet
-change what is displayed."
+When ANCHOR carries a region and the display is graphic, the region
+viewer opens on it; otherwise the canvas detail buffer does.  The
+manifest is loaded first when it is not the current one."
   (let ((manifest-url (xiiif-anchor-manifest anchor))
-        (canvas-id    (xiiif-anchor-canvas anchor)))
+        (canvas-id    (xiiif-anchor-canvas anchor))
+        (region       (xiiif-anchor-region anchor)))
     (unless manifest-url
       (user-error "Anchor has no manifest URL"))
     (let ((current (and xiiif-current-manifest
@@ -643,25 +664,33 @@ change what is displayed."
                                manifest-url)
                         xiiif-current-manifest)))
       (if current
-          (xiiif--open-anchor-canvas current canvas-id)
+          (xiiif--open-anchor-canvas current manifest-url canvas-id region)
         (xiiif--load-resource-async
          manifest-url
          (lambda (manifest)
            (xiiif-cache-set-manifest manifest)
            (run-hook-with-args 'xiiif-after-load-manifest-hook manifest)
-           (xiiif--open-anchor-canvas manifest canvas-id))
+           (xiiif--open-anchor-canvas manifest manifest-url canvas-id region))
          (lambda (collection)
            (xiiif-cache-set-collection collection)
            (xiiif-ui-render-collection collection)))))))
 
-(defun xiiif--open-anchor-canvas (manifest canvas-id)
-  "Open CANVAS-ID within MANIFEST, or the manifest overview when absent."
-  (let ((canvas (and canvas-id
-                     (xiiif-manifest-find-canvas manifest canvas-id))))
-    (if canvas
-        (progn (xiiif-cache-set-canvas canvas)
-               (xiiif-ui-render-canvas canvas))
-      (xiiif-ui-render-manifest manifest))))
+(defun xiiif--open-anchor-canvas (manifest manifest-url canvas-id region)
+  "Open CANVAS-ID within MANIFEST, focusing on REGION when possible.
+Falls back to the canvas detail buffer without a region or off a
+graphic display, and to the manifest overview when the canvas is
+absent."
+  (let* ((canvas (and canvas-id
+                      (xiiif-manifest-find-canvas manifest canvas-id)))
+         (service (and canvas (xiiif-canvas-image-service canvas))))
+    (cond
+     ((and canvas region service (display-graphic-p))
+      (xiiif-cache-set-canvas canvas)
+      (xiiif-view-load-canvas manifest-url canvas-id service region))
+     (canvas
+      (xiiif-cache-set-canvas canvas)
+      (xiiif-ui-render-canvas canvas))
+     (t (xiiif-ui-render-manifest manifest)))))
 
 ;;;###autoload
 (defun xiiif-open-content-state (token)

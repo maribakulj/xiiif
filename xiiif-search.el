@@ -204,9 +204,13 @@ receives (ERROR-SYMBOL URL &rest DATA)."
              (length hits) (if (= 1 (length hits)) "" "s") query)))
 
 (declare-function xiiif-open-canvas "xiiif" (&optional canvas))
+(declare-function xiiif-view-load-canvas "xiiif-view"
+                  (manifest-url canvas-id service &optional region))
 
 (defun xiiif-search--open-at-point ()
-  "Jump to the canvas targeted by the search hit at point."
+  "Open the canvas targeted by the search hit at point.
+When the hit carries a region and the display is graphic, the region
+viewer opens on it; otherwise the canvas detail buffer does."
   (interactive)
   (let* ((hit (tabulated-list-get-id))
          (manifest xiiif-search--manifest))
@@ -217,7 +221,13 @@ receives (ERROR-SYMBOL URL &rest DATA)."
       (unless canvas
         (user-error "Canvas %s not resolvable in the current manifest"
                     (xiiif-search-hit-canvas-id hit)))
-      (xiiif-open-canvas canvas))))
+      (let ((region  (xiiif-search-hit-region hit))
+            (service (xiiif-canvas-image-service canvas)))
+        (if (and region service (display-graphic-p))
+            (xiiif-view-load-canvas
+             (xiiif-manifest-url manifest)
+             (xiiif-canvas-id canvas) service region)
+          (xiiif-open-canvas canvas))))))
 
 
 ;;; ---------- entry point ----------

@@ -20,6 +20,7 @@
                  xiiif-open-source
                  xiiif-browse-canvases
                  xiiif-open-canvas
+                 xiiif-view-canvas
                  xiiif-copy-image-url
                  xiiif-download-image
                  xiiif-download-marked
