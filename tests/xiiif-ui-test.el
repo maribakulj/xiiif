@@ -82,6 +82,38 @@
         (should (equal "http://x/c1" (xiiif-canvas-id id)))))))
 
 
+;;; ---- canvas browser marks survive refresh ----
+
+(defun xiiif-ui-test--manifest-2 ()
+  (make-xiiif-manifest
+   :url "http://x/m" :id "http://x/m" :type "Manifest" :label "M2"
+   :items '(((id . "http://x/c1") (type . "Canvas") (label . "Folio 1"))
+            ((id . "http://x/c2") (type . "Canvas") (label . "Folio 2")))
+   :raw '((id . "http://x/m") (type . "Manifest"))))
+
+(ert-deftest xiiif-ui/marks-reapplied-after-refresh ()
+  "A mark set in the canvas browser survives a re-render, by id."
+  (xiiif-ui-test--in-temp xiiif-ui--canvases-buffer
+    (xiiif-ui-render-canvases (xiiif-ui-test--manifest-2))
+    (with-current-buffer xiiif-ui--canvases-buffer
+      ;; Mark the second canvas.
+      (goto-char (point-min))
+      (forward-line 1)
+      (should (equal "http://x/c2"
+                     (xiiif-canvas-id (xiiif-ui--canvas-at-point))))
+      (tabulated-list-put-tag xiiif-ui--mark-tag)
+      (should (equal '("http://x/c2") (xiiif-ui--marked-canvas-ids)))
+      ;; Re-render (as `xiiif-refresh' does) and check the mark is back.
+      (xiiif-ui-render-canvases (xiiif-ui-test--manifest-2))
+      (should (equal '("http://x/c2") (xiiif-ui--marked-canvas-ids))))))
+
+(ert-deftest xiiif-ui/fresh-render-has-no-marks ()
+  (xiiif-ui-test--in-temp xiiif-ui--canvases-buffer
+    (xiiif-ui-render-canvases (xiiif-ui-test--manifest-2))
+    (with-current-buffer xiiif-ui--canvases-buffer
+      (should-not (xiiif-ui--marked-canvas-ids)))))
+
+
 ;;; ---- canvas detail fires the hook ----
 
 (ert-deftest xiiif-ui/canvas-detail-fires-hook ()

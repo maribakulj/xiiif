@@ -188,17 +188,22 @@
                 (if (xiiif-canvas-image-service canvas) "yes" "-"))))
 
 (defun xiiif-ui-render-canvases (manifest)
-  "Render the canvas browser for MANIFEST and display it."
+  "Render the canvas browser for MANIFEST and display it.
+Marks set before a refresh are re-applied by canvas id, since
+`tabulated-list-print' drops the tag column."
   (let ((buf (get-buffer-create xiiif-ui--canvases-buffer))
         (canvases (xiiif-manifest-canvases manifest)))
     (with-current-buffer buf
-      (xiiif-canvas-list-mode)
-      (setq-local xiiif-ui--manifest manifest)
-      (setq tabulated-list-entries
-            (cl-loop for c in canvases
-                     for i from 1
-                     collect (xiiif-ui--canvas-row i c)))
-      (tabulated-list-print t)
+      (let ((marked (and (derived-mode-p 'xiiif-canvas-list-mode)
+                         (xiiif-ui--marked-canvas-ids))))
+        (xiiif-canvas-list-mode)
+        (setq-local xiiif-ui--manifest manifest)
+        (setq tabulated-list-entries
+              (cl-loop for c in canvases
+                       for i from 1
+                       collect (xiiif-ui--canvas-row i c)))
+        (tabulated-list-print t)
+        (when marked (xiiif-ui--reapply-marks marked)))
       (setq-local mode-line-misc-info
                   (list (format "  %s  [%d]"
                                 (xiiif-manifest-title manifest)
@@ -304,6 +309,20 @@
             (push canvas result)))
         (forward-line 1))
       (nreverse result))))
+
+(defun xiiif-ui--marked-canvas-ids ()
+  "Return the ids of the currently marked canvases."
+  (delq nil (mapcar #'xiiif-canvas-id (xiiif-ui--marked-canvases))))
+
+(defun xiiif-ui--reapply-marks (ids)
+  "Mark every canvas whose id is in IDS in the current canvas browser."
+  (save-excursion
+    (goto-char (point-min))
+    (while (not (eobp))
+      (let ((canvas (xiiif-ui--canvas-at-point)))
+        (when (and canvas (member (xiiif-canvas-id canvas) ids))
+          (tabulated-list-put-tag xiiif-ui--mark-tag)))
+      (forward-line 1))))
 
 
 ;;; ---------- canvas detail ----------
