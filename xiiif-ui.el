@@ -26,6 +26,9 @@
 (require 'json)
 
 (require 'xiiif-core)
+(require 'xiiif-region)
+(require 'xiiif-api)
+(require 'xiiif-fetch)
 (require 'xiiif-cache)
 (require 'xiiif-image)
 (require 'xiiif-annotations)
@@ -151,6 +154,7 @@
   (let ((map (make-sparse-keymap)))
     (define-key map (kbd "RET") #'xiiif-ui--open-canvas-at-point)
     (define-key map (kbd "o")   #'xiiif-ui--open-canvas-at-point)
+    (define-key map (kbd "v")   #'xiiif-view-canvas)
     (define-key map (kbd "y")   #'xiiif-ui--copy-image-url-at-point)
     (define-key map (kbd "d")   #'xiiif-ui--download-image-at-point)
     (define-key map (kbd "i")   #'xiiif-ui--insert-org-link-at-point)
@@ -184,17 +188,22 @@
                 (if (xiiif-canvas-image-service canvas) "yes" "-"))))
 
 (defun xiiif-ui-render-canvases (manifest)
-  "Render the canvas browser for MANIFEST and display it."
+  "Render the canvas browser for MANIFEST and display it.
+Marks set before a refresh are re-applied by canvas id, since
+`tabulated-list-print' drops the tag column."
   (let ((buf (get-buffer-create xiiif-ui--canvases-buffer))
         (canvases (xiiif-manifest-canvases manifest)))
     (with-current-buffer buf
-      (xiiif-canvas-list-mode)
-      (setq-local xiiif-ui--manifest manifest)
-      (setq tabulated-list-entries
-            (cl-loop for c in canvases
-                     for i from 1
-                     collect (xiiif-ui--canvas-row i c)))
-      (tabulated-list-print t)
+      (let ((marked (and (derived-mode-p 'xiiif-canvas-list-mode)
+                         (xiiif-ui--marked-canvas-ids))))
+        (xiiif-canvas-list-mode)
+        (setq-local xiiif-ui--manifest manifest)
+        (setq tabulated-list-entries
+              (cl-loop for c in canvases
+                       for i from 1
+                       collect (xiiif-ui--canvas-row i c)))
+        (tabulated-list-print t)
+        (when marked (xiiif-ui--reapply-marks marked)))
       (setq-local mode-line-misc-info
                   (list (format "  %s  [%d]"
                                 (xiiif-manifest-title manifest)
@@ -301,6 +310,20 @@
         (forward-line 1))
       (nreverse result))))
 
+(defun xiiif-ui--marked-canvas-ids ()
+  "Return the ids of the currently marked canvases."
+  (delq nil (mapcar #'xiiif-canvas-id (xiiif-ui--marked-canvases))))
+
+(defun xiiif-ui--reapply-marks (ids)
+  "Mark every canvas whose id is in IDS in the current canvas browser."
+  (save-excursion
+    (goto-char (point-min))
+    (while (not (eobp))
+      (let ((canvas (xiiif-ui--canvas-at-point)))
+        (when (and canvas (member (xiiif-canvas-id canvas) ids))
+          (tabulated-list-put-tag xiiif-ui--mark-tag)))
+      (forward-line 1))))
+
 
 ;;; ---------- canvas detail ----------
 
@@ -308,6 +331,8 @@
   (let ((map (make-sparse-keymap)))
     (define-key map (kbd "y")   #'xiiif-copy-image-url)
     (define-key map (kbd "d")   #'xiiif-download-image)
+    (define-key map (kbd "v")   #'xiiif-view-canvas)
+    (define-key map (kbd "n")   #'xiiif-annot-create)
     (define-key map (kbd "i")   #'xiiif-insert-org-link)
     (define-key map (kbd "I")   #'xiiif-show-info-json)
     (define-key map (kbd "a")   #'xiiif-show-annotations)
@@ -336,29 +361,54 @@ Only used as a fallback when the canvas does not declare its own
   :type 'string
   :group 'xiiif)
 
+(defvar-local xiiif-ui--thumbnail-generation 0
+  "Render generation of the canvas detail buffer.
+Bumped on every re-render so a thumbnail callback started against an
+earlier rendering can detect that its marker no longer points into
+the current content and drop the insert.")
+(put 'xiiif-ui--thumbnail-generation 'permanent-local t)
+
+(defvar-local xiiif-ui--thumbnail-inflight nil
+  "Cancellable handle of the in-flight thumbnail fetch, or nil.")
+(put 'xiiif-ui--thumbnail-inflight 'permanent-local t)
+
 (defun xiiif-ui--insert-thumbnail-async (canvas buffer marker)
   "Fetch a thumbnail for CANVAS and insert it at MARKER in BUFFER.
-Does nothing on text-only displays or when CANVAS has no usable URL."
+Does nothing on text-only displays or when CANVAS has no usable URL.
+The response is dropped when BUFFER has been re-rendered or killed in
+the meantime: `xiiif-ui-render-canvas' cancels the stored handle and
+bumps the generation this closure captures."
   (when (and (display-graphic-p)
              (buffer-live-p buffer))
     (let ((url (xiiif-canvas-thumbnail-url
-                canvas xiiif-ui-thumbnail-size)))
+                canvas xiiif-ui-thumbnail-size))
+          (generation (buffer-local-value
+                       'xiiif-ui--thumbnail-generation buffer)))
       (when url
-        (xiiif-api-fetch-bytes-async
-         url
-         (lambda (bytes)
-           (when (buffer-live-p buffer)
-             (with-current-buffer buffer
-               (save-excursion
-                 (goto-char marker)
-                 (let ((inhibit-read-only t))
-                   (condition-case _
-                       (insert-image (create-image bytes nil t))
-                     (error
-                      (insert
-                       (propertize "(could not render thumbnail)"
-                                   'face 'xiiif-hint)))))))))
-         (lambda (_err) nil))))))
+        (let ((handle
+               (xiiif-fetch-bytes
+                url
+                (lambda (bytes)
+                  (when (and (buffer-live-p buffer)
+                             (= generation
+                                (buffer-local-value
+                                 'xiiif-ui--thumbnail-generation buffer)))
+                    (with-current-buffer buffer
+                      (setq xiiif-ui--thumbnail-inflight nil)
+                      (save-excursion
+                        (goto-char marker)
+                        (let ((inhibit-read-only t))
+                          (condition-case _
+                              (insert-image (create-image bytes nil t))
+                            (error
+                             (insert
+                              (propertize "(could not render thumbnail)"
+                                          'face 'xiiif-hint)))))))))
+                :errback (lambda (_err) nil)
+                :cache t)))
+          (when (buffer-live-p buffer)
+            (with-current-buffer buffer
+              (setq xiiif-ui--thumbnail-inflight handle))))))))
 
 (defun xiiif-ui-render-canvas (canvas)
   "Render the canvas detail buffer for CANVAS and display it.
@@ -368,13 +418,16 @@ fetches a small preview asynchronously and inserts it at the end."
         (service (xiiif-canvas-image-service canvas))
         thumb-marker)
     (with-current-buffer buf
+      (xiiif-fetch-cancel xiiif-ui--thumbnail-inflight)
+      (setq xiiif-ui--thumbnail-inflight nil)
+      (cl-incf xiiif-ui--thumbnail-generation)
       (xiiif-canvas-mode)
       (setq-local xiiif-ui--canvas canvas)
       (let ((inhibit-read-only t))
         (erase-buffer)
         (xiiif-ui--insert-hints
-         '(("y" . "copy URL") ("d" . "download")
-           ("i" . "org link") ("I" . "info.json")
+         '(("v" . "view") ("n" . "note") ("y" . "copy URL")
+           ("d" . "download") ("i" . "org link") ("I" . "info.json")
            ("J" . "raw JSON") ("q" . "quit")))
         (xiiif-ui--insert-heading (xiiif-canvas-title canvas))
         (xiiif-ui--insert-field "ID"     (xiiif-canvas-id canvas))
@@ -732,8 +785,23 @@ The actual transfer runs asynchronously so Emacs stays responsive."
     (pop-to-buffer-same-window buf)))
 
 (declare-function xiiif-show-info-json "xiiif")
-(declare-function xiiif-show-annotations "xiiif")
+(declare-function xiiif-show-annotations "xiiif" (&optional canvas))
 (declare-function xiiif-show-ocr "xiiif")
+(declare-function xiiif-download-image "xiiif")
+(declare-function xiiif-browse-canvases "xiiif")
+(declare-function xiiif-copy-image-url "xiiif")
+(declare-function xiiif-copy-manifest-url "xiiif")
+(declare-function xiiif-download-marked "xiiif")
+(declare-function xiiif-insert-org-link "xiiif")
+(declare-function xiiif-refresh "xiiif")
+(declare-function xiiif-show-raw-json "xiiif")
+(declare-function xiiif-show-structures "xiiif")
+(declare-function xiiif-view-canvas "xiiif" (&optional canvas))
+(declare-function xiiif-open-canvas "xiiif" (&optional canvas))
+(declare-function xiiif-annot-create "xiiif-annot" ())
+(declare-function xiiif-view-load-canvas "xiiif-view"
+                  (manifest-url canvas-id service &optional region))
+(defvar xiiif-current-manifest)
 
 (defun xiiif-ui--info-refresh ()
   "Re-fetch the current info.json."
@@ -767,7 +835,9 @@ The actual transfer runs asynchronously so Emacs stays responsive."
 
 (defvar xiiif-annotations-mode-map
   (let ((map (make-sparse-keymap)))
-    (define-key map (kbd "g") #'xiiif-refresh)
+    (define-key map (kbd "g") #'xiiif-ui--annotations-refresh)
+    (define-key map (kbd "RET") #'xiiif-ui--annotation-view-at-point)
+    (define-key map (kbd "v") #'xiiif-ui--annotation-view-at-point)
     (define-key map (kbd "J") #'xiiif-show-raw-json)
     (define-key map (kbd "q") #'quit-window)
     map)
@@ -785,16 +855,24 @@ The actual transfer runs asynchronously so Emacs stays responsive."
   "List of `xiiif-annotation' rendered in the current buffer.")
 
 (defun xiiif-ui--insert-annotation (a)
-  "Insert one `xiiif-annotation' A into the current buffer."
-  (xiiif-ui--insert-field "Motivation" (xiiif-annotation-motivation a))
-  (xiiif-ui--insert-field "Target"     (xiiif-annotation-target a))
-  (xiiif-ui--insert-field "Type"       (xiiif-annotation-body-type a))
-  (xiiif-ui--insert-field "Language"   (xiiif-annotation-body-lang a))
-  (when-let ((val (xiiif-annotation-body-value a)))
-    (insert "\n")
-    (insert val)
-    (unless (string-suffix-p "\n" val) (insert "\n")))
-  (insert (make-string 40 ?-) "\n"))
+  "Insert one `xiiif-annotation' A into the current buffer.
+When A carries a region, the whole block is tagged with it so `RET'
+can open the region viewer there."
+  (let ((start (point)))
+    (xiiif-ui--insert-field "Motivation" (xiiif-annotation-motivation a))
+    (xiiif-ui--insert-field "Target"     (xiiif-annotation-target a))
+    (xiiif-ui--insert-field "Region"
+                            (xiiif-region-to-string (xiiif-annotation-region a)))
+    (xiiif-ui--insert-field "Type"       (xiiif-annotation-body-type a))
+    (xiiif-ui--insert-field "Language"   (xiiif-annotation-body-lang a))
+    (when-let ((val (xiiif-annotation-body-value a)))
+      (insert "\n")
+      (insert val)
+      (unless (string-suffix-p "\n" val) (insert "\n")))
+    (insert (make-string 40 ?-) "\n")
+    (when (xiiif-annotation-region a)
+      (put-text-property start (point) 'xiiif-annotation-region
+                         (xiiif-annotation-region a)))))
 
 (defun xiiif-ui-render-annotations (canvas annotations)
   "Render ANNOTATIONS (list of `xiiif-annotation') for CANVAS.
@@ -819,6 +897,29 @@ ANNOTATIONS may be empty; the buffer still opens with a diagnostic."
             (xiiif-ui--insert-annotation a)))
         (goto-char (point-min))))
     (pop-to-buffer-same-window buf)))
+
+(defun xiiif-ui--annotations-refresh ()
+  "Re-collect and re-render the annotations in the current buffer."
+  (interactive)
+  (unless xiiif-ui--annotations-canvas
+    (user-error "No annotations context to refresh"))
+  (xiiif-show-annotations xiiif-ui--annotations-canvas))
+
+(defun xiiif-ui--annotation-view-at-point ()
+  "Open the region viewer on the annotation at point, if it has a region.
+Falls back to the canvas detail buffer without a region or off a
+graphic display."
+  (interactive)
+  (let ((region (get-text-property (point) 'xiiif-annotation-region))
+        (canvas xiiif-ui--annotations-canvas))
+    (unless canvas (user-error "No annotation canvas in this buffer"))
+    (let ((service (xiiif-canvas-image-service canvas)))
+      (if (and region service (display-graphic-p))
+          (xiiif-view-load-canvas
+           (and (bound-and-true-p xiiif-current-manifest)
+                (xiiif-manifest-url xiiif-current-manifest))
+           (xiiif-canvas-id canvas) service region)
+        (xiiif-open-canvas canvas)))))
 
 
 ;;; ---------- OCR sidecar ----------

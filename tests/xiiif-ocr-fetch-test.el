@@ -32,7 +32,9 @@
 
 (defmacro xiiif-ocr-fetch-test--with (fixtures &rest body)
   (declare (indent 1) (debug (form body)))
-  `(let ((xiiif-ocr-fetch-test--fixtures ,fixtures))
+  `(let ((xiiif-ocr-fetch-test--fixtures ,fixtures)
+         (xiiif-api-backend 'url)
+         (xiiif-fetch-host-interval 0))
      (cl-letf (((symbol-function 'url-retrieve)
                 #'xiiif-ocr-fetch-test--stub))
        ,@body)))

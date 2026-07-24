@@ -1,0 +1,546 @@
+;;; xiiif-view-test.el --- Tests for the region viewer model -*- lexical-binding: t; -*-
+
+;;; Commentary:
+
+;; Pure geometry: view-state serialisation, zoom scales derived from
+;; info.json fixtures, region clamping/expansion, HiDPI, and the
+;; level-0-safe request path.
+
+;;; Code:
+
+(require 'ert)
+(require 'cl-lib)
+(require 'json)
+(require 'xiiif-core)
+(require 'xiiif-image)
+(require 'xiiif-view)
+
+(defconst xiiif-view-test--dir
+  (file-name-directory (or load-file-name buffer-file-name)))
+
+(defun xiiif-view-test--info (name)
+  "Load the info.json fixture NAME into a `xiiif-image-info'."
+  (let* ((path (expand-file-name (concat "../examples/" name)
+                                 xiiif-view-test--dir))
+         (json (let ((json-object-type 'alist)
+                     (json-array-type 'vector)
+                     (json-key-type 'symbol)
+                     (json-false :json-false)
+                     (json-null nil))
+                 (json-read-file path))))
+    (xiiif-image-parse-info json (concat "https://x/svc/" name))))
+
+
+;;; ---- serialisation ----
+
+(ert-deftest xiiif-view/state-alist-round-trip ()
+  (let* ((s (make-xiiif-view-state
+             :manifest-url "https://x/m" :canvas-id "https://x/c/1"
+             :x 100 :y 200 :w 300 :h 400 :level 2 :rotation 90))
+         (s2 (xiiif-view-state-from-alist (xiiif-view-state-to-alist s))))
+    (should (equal (xiiif-view-state-x s) (xiiif-view-state-x s2)))
+    (should (equal (xiiif-view-state-level s) (xiiif-view-state-level s2)))
+    (should (equal (xiiif-view-state-rotation s) (xiiif-view-state-rotation s2)))
+    (should (equal (xiiif-view-state-canvas-id s)
+                   (xiiif-view-state-canvas-id s2)))))
+
+(ert-deftest xiiif-view/state-region ()
+  (let ((r (xiiif-view-state-region
+            (make-xiiif-view-state :x 10 :y 20 :w 30 :h 40))))
+    (should (= 10 (xiiif-region-x r)))
+    (should (= 40 (xiiif-region-h r)))
+    (should (eq 'pixel (xiiif-region-unit r)))))
+
+
+;;; ---- zoom scales ----
+
+(ert-deftest xiiif-view/scales-from-sizes ()
+  "The level-1 fixture (6000 wide, sizes 150/600/1500/3000) yields
+ascending fractions ending at full resolution."
+  (let ((scales (xiiif-view-scales (xiiif-view-test--info "sample-info.json"))))
+    (should (equal scales (sort (copy-sequence scales) #'<)))
+    (should (= 1.0 (car (last scales))))
+    ;; 150/6000 = 0.025, 3000/6000 = 0.5, plus the appended 1.0.
+    (should (member 0.5 scales))
+    (should (cl-some (lambda (s) (< (abs (- s 0.025)) 1e-6)) scales))))
+
+(ert-deftest xiiif-view/scales-default-without-info ()
+  (should (equal (xiiif-view-scales nil)
+                 (delete-dups (sort (cons 1.0 (copy-sequence
+                                               xiiif-view-default-scales))
+                                    #'<)))))
+
+(ert-deftest xiiif-view/scale-at-clamps-level ()
+  (let ((info (xiiif-view-test--info "sample-info.json")))
+    (should (= 1.0 (xiiif-view-scale-at info 999)))
+    (should (= (car (xiiif-view-scales info))
+               (xiiif-view-scale-at info -5)))))
+
+
+;;; ---- closest size (M6) ----
+
+(ert-deftest xiiif-image/closest-size-picks-covering ()
+  (let ((info (xiiif-view-test--info "sample-info-level0.json")))
+    ;; sizes: 250, 500, 1000, 2000.  Target 400 -> smallest >= 400 = 500.
+    (let ((best (xiiif-image-closest-size info 400)))
+      (should (= 500 (plist-get best :width)))
+      (should (= 375 (plist-get best :height)))
+      (should (equal "500,375" (plist-get best :segment))))))
+
+(ert-deftest xiiif-image/closest-size-falls-back-to-largest ()
+  (let ((info (xiiif-view-test--info "sample-info-level0.json")))
+    ;; Target beyond every advertised width -> the largest (2000).
+    (should (= 2000 (plist-get (xiiif-image-closest-size info 9999) :width)))))
+
+(ert-deftest xiiif-image/closest-size-derives-from-tiles ()
+  "The level-1 fixture has no small `sizes' gap; verify tile-derived
+candidates when only tiles are present."
+  (let ((info (make-xiiif-image-info
+               :width 8192 :height 8192
+               :tiles '(((width . 512) (scaleFactors . [1 2 4 8]))))))
+    (let ((best (xiiif-image-closest-size info 1000)))
+      ;; Candidates: 8192, 4096, 2048, 1024.  Smallest >= 1000 = 1024.
+      (should (= 1024 (plist-get best :width))))))
+
+(ert-deftest xiiif-image/closest-size-nil-without-sizes ()
+  (should-not (xiiif-image-closest-size
+               (make-xiiif-image-info :width 100 :height 100) 50)))
+
+(ert-deftest xiiif-image/level0-predicate ()
+  (should (xiiif-image-info-level0-p
+           (xiiif-view-test--info "sample-info-level0.json")))
+  (should-not (xiiif-image-info-level0-p
+               (xiiif-view-test--info "sample-info.json"))))
+
+
+;;; ---- geometry: region clamp ----
+
+(ert-deftest xiiif-view/request-clamps-region-to-canvas ()
+  (let* ((info (xiiif-view-test--info "sample-info.json")) ; 6000x4000
+         (state (make-xiiif-view-state :x 5800 :y 3900 :w 1000 :h 1000
+                                       :level 99))
+         (req (xiiif-view-image-request state :info info)))
+    ;; x+w must not exceed 6000, y+h not exceed 4000.
+    (should (string-match "\\`\\([0-9]+\\),\\([0-9]+\\),\\([0-9]+\\),\\([0-9]+\\)\\'"
+                          (plist-get req :region)))
+    (let ((x (string-to-number (match-string 1 (plist-get req :region))))
+          (w (string-to-number (match-string 3 (plist-get req :region))))
+          (y (string-to-number (match-string 2 (plist-get req :region))))
+          (h (string-to-number (match-string 4 (plist-get req :region)))))
+      (should (<= (+ x w) 6000))
+      (should (<= (+ y h) 4000)))))
+
+(ert-deftest xiiif-view/request-expands-by-margin ()
+  (let* ((info (xiiif-view-test--info "sample-info.json"))
+         (state (make-xiiif-view-state :x 1000 :y 1000 :w 200 :h 200
+                                       :level 99))
+         (plain (xiiif-view-image-request state :info info :margin 0.0))
+         (grown (xiiif-view-image-request state :info info :margin 1.0)))
+    ;; margin 1.0 adds 200px each side: region becomes 600,600 at 800,800.
+    (should (equal "1000,1000,200,200" (plist-get plain :region)))
+    (should (equal "800,800,600,600" (plist-get grown :region)))))
+
+
+;;; ---- geometry: level >= 1 output size + HiDPI ----
+
+(ert-deftest xiiif-view/request-output-native-cap ()
+  "At full level with HiDPI 1, output equals the region (native)."
+  (let* ((info (xiiif-view-test--info "sample-info.json"))
+         (max-level (xiiif-view-max-level info))
+         (state (make-xiiif-view-state :x 0 :y 0 :w 400 :h 300
+                                       :level max-level))
+         (req (xiiif-view-image-request state :info info :hidpi 1.0)))
+    (should (equal "400,300" (plist-get req :size)))
+    (should (= 1.0 (plist-get req :scale)))))
+
+(ert-deftest xiiif-view/request-hidpi-doubles-pixels ()
+  "At a fractional level, HiDPI 2 doubles physical pixels while the
+display scale halves - the Retina path."
+  (let* ((info (xiiif-view-test--info "sample-info.json"))
+         ;; Find a level whose scale is 0.25 (1500/6000).
+         (scales (xiiif-view-scales info))
+         (level (cl-position 0.25 scales :test (lambda (a b) (< (abs (- a b)) 1e-6))))
+         (state (make-xiiif-view-state :x 0 :y 0 :w 400 :h 400 :level level)))
+    (should level)
+    (let ((one (xiiif-view-image-request state :info info :hidpi 1.0))
+          (two (xiiif-view-image-request state :info info :hidpi 2.0)))
+      ;; level scale 0.25: 400*0.25 = 100 physical at hidpi 1.
+      (should (= 100 (plist-get one :width)))
+      (should (= 1.0 (plist-get one :scale)))
+      ;; hidpi 2: 400*0.25*2 = 200 physical, scale 0.5.
+      (should (= 200 (plist-get two :width)))
+      (should (= 0.5 (plist-get two :scale))))))
+
+
+;;; ---- geometry: level-0 safety (M6) ----
+
+(ert-deftest xiiif-view/request-level0-uses-full-and-advertised ()
+  "On a level-0 server the region is `full' and the size is one of
+the advertised sizes - never a synthesized dimension."
+  (let* ((info (xiiif-view-test--info "sample-info-level0.json"))
+         (state (make-xiiif-view-state :x 500 :y 500 :w 300 :h 300
+                                       :level 1))
+         (req (xiiif-view-image-request state :info info :hidpi 1.0)))
+    (should (equal "full" (plist-get req :region)))
+    ;; The chosen size must be one of 250/500/1000/2000.
+    (should (member (plist-get req :width) '(250 500 1000 2000)))
+    (should (string-match-p "\\`[0-9]+,[0-9]+\\'" (plist-get req :size)))))
+
+(ert-deftest xiiif-view/request-level0-scales-with-level ()
+  "A higher level targets a larger advertised size."
+  (let* ((info (xiiif-view-test--info "sample-info-level0.json"))
+         (low  (make-xiiif-view-state :x 0 :y 0 :w 4000 :h 3000 :level 0))
+         (high (make-xiiif-view-state :x 0 :y 0 :w 4000 :h 3000
+                                      :level (xiiif-view-max-level info))))
+    (let ((lo (xiiif-view-image-request low :info info))
+          (hi (xiiif-view-image-request high :info info)))
+      (should (<= (plist-get lo :width) (plist-get hi :width))))))
+
+
+;;; ---- URL assembly ----
+
+(ert-deftest xiiif-view/image-url-assembles-segments ()
+  (let* ((info (xiiif-view-test--info "sample-info.json"))
+         (service (make-xiiif-image-service :id "https://img/svc"))
+         (state (make-xiiif-view-state :x 10 :y 20 :w 100 :h 100
+                                       :level (xiiif-view-max-level info)
+                                       :rotation 0))
+         (url (xiiif-view-image-url state service :info info)))
+    (should (string-prefix-p "https://img/svc/10,20,100,100/" url))
+    (should (string-suffix-p "/0/default.jpg" url))))
+
+
+;;; ---- thumbnail rewire (M6) ----
+
+(ert-deftest xiiif-view/thumbnail-url-level0-safe ()
+  "With info, the thumbnail size comes from the advertised set."
+  (let* ((info (xiiif-view-test--info "sample-info-level0.json"))
+         (canvas (make-xiiif-canvas
+                  :id "https://x/c/1"
+                  :image-service (make-xiiif-image-service
+                                  :id "https://img/svc"))))
+    (let ((url (xiiif-canvas-thumbnail-url canvas "!200,200" info)))
+      ;; 200 -> smallest advertised >= 200 = 250x188.
+      (should (equal "https://img/svc/full/250,188/0/default.jpg" url)))))
+
+(ert-deftest xiiif-view/thumbnail-url-without-info-keeps-default ()
+  (let ((canvas (make-xiiif-canvas
+                 :id "https://x/c/1"
+                 :image-service (make-xiiif-image-service
+                                 :id "https://img/svc"))))
+    (should (equal "https://img/svc/full/!200,200/0/default.jpg"
+                   (xiiif-canvas-thumbnail-url canvas)))))
+
+;;; ---- navigation math ----
+
+(ert-deftest xiiif-view/fit-region-fills-window ()
+  "At full scale (1.0) the region equals the window in canvas px."
+  (let* ((info (xiiif-view-test--info "sample-info.json"))
+         (max-level (xiiif-view-max-level info))
+         (state (make-xiiif-view-state :x 3000 :y 2000 :w 10 :h 10
+                                       :level max-level))
+         (fit (xiiif-view-fit-region state info 800 600)))
+    (should (= 800 (xiiif-view-state-w fit)))
+    (should (= 600 (xiiif-view-state-h fit)))
+    ;; Centre preserved: old centre (3005,2005) -> new x = 3005-400.
+    (should (= (- 3005 400) (xiiif-view-state-x fit)))))
+
+(ert-deftest xiiif-view/fit-region-lower-scale-larger-region ()
+  (let* ((info (xiiif-view-test--info "sample-info.json"))
+         ;; A level whose scale is 0.5 (3000/6000).
+         (scales (xiiif-view-scales info))
+         (level (cl-position 0.5 scales
+                             :test (lambda (a b) (< (abs (- a b)) 1e-6))))
+         (state (make-xiiif-view-state :x 0 :y 0 :w 10 :h 10 :level level))
+         (fit (xiiif-view-fit-region state info 400 400)))
+    ;; scale 0.5 -> region = 400/0.5 = 800 canvas px.
+    (should (= 800 (xiiif-view-state-w fit)))))
+
+(ert-deftest xiiif-view/pan-moves-and-clamps ()
+  (let* ((info (xiiif-view-test--info "sample-info.json")) ; 6000x4000
+         (state (make-xiiif-view-state :x 1000 :y 1000 :w 400 :h 400 :level 0)))
+    ;; Half-screen right = +200.
+    (should (= 1200 (xiiif-view-state-x (xiiif-view-pan state info 0.5 0))))
+    ;; Panning left past 0 clamps at 0.
+    (should (= 0 (xiiif-view-state-x (xiiif-view-pan state info -10.0 0))))))
+
+(ert-deftest xiiif-view/zoom-changes-level-and-clamps ()
+  (let* ((info (xiiif-view-test--info "sample-info.json"))
+         (maxl (xiiif-view-max-level info))
+         (state (make-xiiif-view-state :x 3000 :y 2000 :w 400 :h 400 :level 0)))
+    (should (= 1 (xiiif-view-state-level
+                  (xiiif-view-zoom state info 1 800 600))))
+    ;; Cannot zoom below 0 or above max.
+    (should (= 0 (xiiif-view-state-level
+                  (xiiif-view-zoom state info -5 800 600))))
+    (should (= maxl (xiiif-view-state-level
+                     (xiiif-view-zoom state info 999 800 600))))))
+
+(ert-deftest xiiif-view/neighbors-are-four-pans ()
+  (let* ((info (xiiif-view-test--info "sample-info.json"))
+         (state (make-xiiif-view-state :x 2000 :y 2000 :w 400 :h 400 :level 0))
+         (ns (xiiif-view-neighbors state info)))
+    (should (= 4 (length ns)))
+    (should (cl-every #'xiiif-view-state-p ns))))
+
+
+;;; ---- per-buffer LRU ----
+
+(ert-deftest xiiif-view/lru-evicts-and-flushes-oldest ()
+  (with-temp-buffer
+    (let ((xiiif-view-cache-size 3)
+          (flushed nil))
+      (cl-letf (((symbol-function 'image-flush)
+                 (lambda (img &rest _) (push img flushed))))
+        (dotimes (i 5)
+          (xiiif-view--lru-put (format "u%d" i) (list 'image i)))
+        ;; Only the 3 most-recent survive.
+        (should (= 3 (length xiiif-view--lru)))
+        (should (xiiif-view--lru-get "u4"))
+        (should (xiiif-view--lru-get "u2"))
+        (should-not (assoc "u0" xiiif-view--lru))
+        (should-not (assoc "u1" xiiif-view--lru))
+        ;; The evicted images were flushed.
+        (should (member '(image 0) flushed))))))
+
+(ert-deftest xiiif-view/lru-get-promotes ()
+  (with-temp-buffer
+    (let ((xiiif-view-cache-size 3))
+      (xiiif-view--lru-put "a" 'ia)
+      (xiiif-view--lru-put "b" 'ib)
+      (xiiif-view--lru-put "c" 'ic)
+      ;; Touch "a" so it is no longer the oldest.
+      (should (eq 'ia (xiiif-view--lru-get "a")))
+      (xiiif-view--lru-put "d" 'id) ; evicts the oldest, now "b"
+      (should-not (assoc "b" xiiif-view--lru))
+      (should (assoc "a" xiiif-view--lru)))))
+
+
+;;; ---- render pipeline (stubbed graphics + transport) ----
+
+(defmacro xiiif-view-test--with-viewer (&rest body)
+  "Run BODY in a viewer buffer with graphics and fetch stubbed.
+Binds `fetched' (list of (URL PRIORITY) submitted, newest first) and
+`cancelled' (groups cancelled).  Images are opaque (list IMAGE URL)."
+  (declare (indent 0) (debug (body)))
+  `(let ((fetched nil) (cancelled nil))
+     (cl-letf (((symbol-function 'display-graphic-p) (lambda (&rest _) t))
+               ((symbol-function 'xiiif-view--make-image)
+                (lambda (bytes _scale) (list 'image bytes)))
+               ((symbol-function 'xiiif-view--display-image)
+                (lambda (image) (setq xiiif-view--image image)))
+               ((symbol-function 'run-with-idle-timer)
+                (lambda (_delay _rep fn &rest args) (apply fn args) nil))
+               ((symbol-function 'xiiif-fetch-cancel-group)
+                (lambda (g) (push g cancelled)))
+               ((symbol-function 'xiiif-fetch-bytes)
+                (lambda (url cb &rest kw)
+                  (push (list url (plist-get kw :priority)) fetched)
+                  (when (eq (plist-get kw :priority) nil)
+                    (funcall cb (format "bytes-of:%s" url)))
+                  'req)))
+       (with-temp-buffer
+         (rename-buffer xiiif-view--buffer t)
+         (xiiif-view-mode)
+         (setq xiiif-view--info
+               (xiiif-view-test--info "sample-info.json")
+               xiiif-view--service (make-xiiif-image-service :id "https://img/svc"))
+         ,@body))))
+
+(ert-deftest xiiif-view/navigate-fetches-and-caches ()
+  (xiiif-view-test--with-viewer
+    (xiiif-view--navigate
+     (make-xiiif-view-state :x 0 :y 0 :w 400 :h 400 :level 1))
+    ;; An interactive (priority nil) sharp fetch happened...
+    (should (cl-find nil fetched :key #'cadr))
+    ;; ...and its result landed in the LRU.
+    (should (= 1 (cl-count nil fetched :key #'cadr)))
+    (should xiiif-view--image)))
+
+(ert-deftest xiiif-view/navigate-cancels-previous-group ()
+  (xiiif-view-test--with-viewer
+    (xiiif-view--navigate
+     (make-xiiif-view-state :x 0 :y 0 :w 400 :h 400 :level 1))
+    (let ((first-group xiiif-view--group))
+      (should first-group)
+      (xiiif-view--navigate
+       (make-xiiif-view-state :x 100 :y 100 :w 400 :h 400 :level 1))
+      (should (memq first-group cancelled)))))
+
+(ert-deftest xiiif-view/navigate-queues-prefetch ()
+  (let ((xiiif-view-prefetch t))
+    (xiiif-view-test--with-viewer
+      (xiiif-view--navigate
+       (make-xiiif-view-state :x 2000 :y 2000 :w 400 :h 400 :level 1))
+      ;; Four neighbours queued at prefetch priority.
+      (should (= 4 (cl-count 'prefetch fetched :key #'cadr))))))
+
+(ert-deftest xiiif-view/cached-navigation-skips-fetch ()
+  (xiiif-view-test--with-viewer
+    (let ((state (make-xiiif-view-state :x 0 :y 0 :w 400 :h 400 :level 1)))
+      (xiiif-view--navigate state)
+      (setq fetched nil)
+      ;; Navigating back to the same URL uses the LRU, no interactive fetch.
+      (xiiif-view--navigate (copy-xiiif-view-state state))
+      (should-not (cl-find nil fetched :key #'cadr)))))
+
+(ert-deftest xiiif-view/stale-response-dropped ()
+  "A sharp response for a superseded generation is ignored."
+  (let ((held nil))
+    (cl-letf (((symbol-function 'display-graphic-p) (lambda (&rest _) t))
+              ((symbol-function 'xiiif-view--make-image)
+               (lambda (bytes _scale) (list 'image bytes)))
+              ((symbol-function 'xiiif-view--display-image)
+               (lambda (image) (setq xiiif-view--image image)))
+              ((symbol-function 'run-with-idle-timer)
+               (lambda (_d _r fn &rest args) (apply fn args) nil))
+              ((symbol-function 'xiiif-fetch-cancel-group) #'ignore)
+              ((symbol-function 'xiiif-fetch-bytes)
+               (lambda (_url cb &rest kw)
+                 (unless (plist-get kw :priority)
+                   (push cb held))
+                 'req)))
+      (with-temp-buffer
+        (rename-buffer xiiif-view--buffer t)
+        (xiiif-view-mode)
+        (setq xiiif-view--info (xiiif-view-test--info "sample-info.json")
+              xiiif-view--service (make-xiiif-image-service :id "https://img/svc"))
+        (xiiif-view--navigate
+         (make-xiiif-view-state :x 0 :y 0 :w 400 :h 400 :level 1))
+        (let ((stale-cb (car held)))
+          ;; Navigate away, superseding the pending fetch.
+          (xiiif-view--navigate
+           (make-xiiif-view-state :x 500 :y 500 :w 400 :h 400 :level 1))
+          (setq xiiif-view--image nil)
+          ;; The stale callback must not touch the buffer now.
+          (funcall stale-cb "late-bytes")
+          (should-not xiiif-view--image))))))
+
+
+;;; ---- terminal fallback ----
+
+(ert-deftest xiiif-view/terminal-shows-url-not-crash ()
+  (cl-letf (((symbol-function 'display-graphic-p) (lambda (&rest _) nil)))
+    (with-temp-buffer
+      (rename-buffer xiiif-view--buffer t)
+      (xiiif-view-mode)
+      (setq xiiif-view--info (xiiif-view-test--info "sample-info.json")
+            xiiif-view--service (make-xiiif-image-service :id "https://img/svc"))
+      (xiiif-view--navigate
+       (make-xiiif-view-state :x 0 :y 0 :w 400 :h 400 :level 1))
+      (goto-char (point-min))
+      (should (search-forward "graphic display" nil t))
+      (should (search-forward "https://img/svc/" nil t)))))
+
+;;; ---- commands: anchor, copy-url, annotate ----
+
+(ert-deftest xiiif-view/state-to-anchor ()
+  (let* ((state (make-xiiif-view-state
+                 :manifest-url "https://x/m" :canvas-id "https://x/c/1"
+                 :x 10 :y 20 :w 30 :h 40 :level 1))
+         (anchor (xiiif-view-state-to-anchor state)))
+    (should (equal "https://x/m" (xiiif-anchor-manifest anchor)))
+    (should (equal "https://x/c/1" (xiiif-anchor-canvas anchor)))
+    (should (= 10 (xiiif-region-x (xiiif-anchor-region anchor))))))
+
+(ert-deftest xiiif-view/copy-url ()
+  (with-temp-buffer
+    (rename-buffer xiiif-view--buffer t)
+    (xiiif-view-mode)
+    (setq xiiif-view--info (xiiif-view-test--info "sample-info.json")
+          xiiif-view--service (make-xiiif-image-service :id "https://img/svc")
+          xiiif-view--state (make-xiiif-view-state
+                             :x 10 :y 20 :w 100 :h 100
+                             :level (xiiif-view-max-level
+                                     (xiiif-view-test--info "sample-info.json"))))
+    (let ((kill-ring nil))
+      (cl-letf (((symbol-function 'frame-scale-factor) (lambda (&rest _) 1)))
+        (xiiif-view-copy-url))
+      (should (string-prefix-p "https://img/svc/10,20,100,100/"
+                               (current-kill 0))))))
+
+(ert-deftest xiiif-view/annotate-unconfigured-signals ()
+  (with-temp-buffer
+    (xiiif-view-mode)
+    (setq xiiif-view--state (make-xiiif-view-state :x 0 :y 0 :w 10 :h 10)
+          xiiif-view-annotate-function nil)
+    (should-error (xiiif-view-annotate) :type 'user-error)))
+
+(ert-deftest xiiif-view/annotate-calls-backend ()
+  (with-temp-buffer
+    (xiiif-view-mode)
+    (let ((got nil))
+      (setq xiiif-view--state (make-xiiif-view-state
+                               :manifest-url "m" :canvas-id "c"
+                               :x 1 :y 2 :w 3 :h 4)
+            xiiif-view-annotate-function (lambda (anchor) (setq got anchor)))
+      (xiiif-view-annotate)
+      (should (xiiif-anchor-p got))
+      (should (equal "c" (xiiif-anchor-canvas got))))))
+
+(ert-deftest xiiif-view/mode-map-bindings ()
+  (should (eq 'xiiif-view-copy-url
+              (lookup-key xiiif-view-mode-map (kbd "y"))))
+  (should (eq 'xiiif-view-open-in-mirador
+              (lookup-key xiiif-view-mode-map (kbd "M"))))
+  (should (eq 'xiiif-view-annotate
+              (lookup-key xiiif-view-mode-map (kbd "a"))))
+  (should (eq 'xiiif-view-pan-left
+              (lookup-key xiiif-view-mode-map (kbd "h"))))
+  (should (eq 'xiiif-view-zoom-in
+              (lookup-key xiiif-view-mode-map (kbd "+")))))
+
+
+;;; ---- initial state building ----
+
+(ert-deftest xiiif-view/initial-state-whole-canvas ()
+  (let* ((info (xiiif-view-test--info "sample-info.json")) ; 6000x4000
+         (state (xiiif-view--initial-state "m" "c" info nil 800 600)))
+    (should (= 0 (xiiif-view-state-level state)))
+    (should (equal "m" (xiiif-view-state-manifest-url state)))))
+
+(ert-deftest xiiif-view/initial-state-focuses-region ()
+  "A region-focused initial state picks a level whose fitted region
+covers the region and centres on it."
+  (let* ((info (xiiif-view-test--info "sample-info.json"))
+         (region (make-xiiif-region :x 1000 :y 1000 :w 400 :h 300))
+         (state (xiiif-view--initial-state "m" "c" info region 800 600)))
+    ;; The fitted region must contain the target region's centre.
+    (let ((cx (+ (xiiif-view-state-x state) (/ (xiiif-view-state-w state) 2)))
+          (cy (+ (xiiif-view-state-y state) (/ (xiiif-view-state-h state) 2))))
+      (should (< (abs (- cx 1200)) 50))
+      (should (< (abs (- cy 1150)) 50)))))
+
+(ert-deftest xiiif-view/initial-state-percent-region ()
+  "A percent region is converted to pixels via the info dimensions."
+  (let* ((info (xiiif-view-test--info "sample-info.json")) ; 6000x4000
+         (region (make-xiiif-region :x 10 :y 10 :w 20 :h 20 :unit 'percent))
+         (px (xiiif-view--region-pixels region info)))
+    ;; 10% of 6000 = 600, 20% of 6000 = 1200.
+    (should (equal '(600 400 1200 800) px))))
+
+(ert-deftest xiiif-view/open-focuses-region ()
+  "xiiif-view-open builds a viewer focused on the given region."
+  (cl-letf (((symbol-function 'display-graphic-p) (lambda (&rest _) t))
+            ((symbol-function 'frame-scale-factor) (lambda (&rest _) 1))
+            ((symbol-function 'xiiif-view--render) #'ignore)
+            ((symbol-function 'xiiif-fetch-cancel-group) #'ignore)
+            ((symbol-function 'pop-to-buffer-same-window) #'ignore))
+    (let ((info (xiiif-view-test--info "sample-info.json"))
+          (region (make-xiiif-region :x 2000 :y 1500 :w 200 :h 200)))
+      (unwind-protect
+          (progn
+            (xiiif-view-open "https://x/m" "https://x/c/1"
+                             (make-xiiif-image-service :id "https://img/svc")
+                             info region)
+            (with-current-buffer xiiif-view--buffer
+              (let ((cx (+ (xiiif-view-state-x xiiif-view--state)
+                           (/ (xiiif-view-state-w xiiif-view--state) 2))))
+                (should (< (abs (- cx 2100)) 60))
+                (should (equal "https://x/c/1"
+                               (xiiif-view-state-canvas-id xiiif-view--state))))))
+        (when (get-buffer xiiif-view--buffer)
+          (kill-buffer xiiif-view--buffer))))))
+
+(provide 'xiiif-view-test)
+;;; xiiif-view-test.el ends here

@@ -27,6 +27,7 @@
 (require 'subr-x)
 (require 'xiiif-core)
 (require 'xiiif-api)
+(require 'xiiif-fetch)
 (require 'xiiif-profiles)
 
 (defcustom xiiif-image-default-region "full"
@@ -149,11 +150,11 @@ same way as `xiiif-image-url'."
     (if (not url)
         (funcall (or errback #'xiiif-api--default-errback)
                  (list 'xiiif-error nil "no image service"))
-      (xiiif-api-download-file-async
+      (xiiif-fetch-file
        url
        (expand-file-name destination)
        callback
-       errback))))
+       :errback errback))))
 
 
 
@@ -229,6 +230,51 @@ extension objects; the URI is truncated to its `levelN' suffix."
                                           (xiiif--as-list sf) ",")
                              "-"))))
 
+(defun xiiif-image--candidate-sizes (info)
+  "Return a list of (WIDTH . HEIGHT) output sizes advertised by INFO.
+Prefers the explicit `sizes' array; failing that, derives sizes from
+the tile `scaleFactors' applied to the full dimensions.  Returns nil
+when neither is available."
+  (let ((sizes (cl-loop for s in (xiiif-image-info-sizes info)
+                        for w = (xiiif--get s 'width)
+                        for h = (xiiif--get s 'height)
+                        when w collect (cons w h))))
+    (or sizes
+        (let ((fw (xiiif-image-info-width info))
+              (fh (xiiif-image-info-height info))
+              (sfs (cl-loop for tile in (xiiif-image-info-tiles info)
+                            append (xiiif--as-list
+                                    (xiiif--get tile 'scaleFactors)))))
+          (when (and fw fh sfs)
+            (cl-loop for sf in (delete-dups (copy-sequence sfs))
+                     when (and (numberp sf) (> sf 0))
+                     collect (cons (max 1 (round (/ fw (float sf))))
+                                   (and fh (max 1 (round (/ fh (float sf))))))))))))
+
+(defun xiiif-image-closest-size (info target-width &optional _target-height)
+  "Return the advertised size of INFO closest to TARGET-WIDTH.
+Chooses the smallest advertised width that is at least TARGET-WIDTH,
+falling back to the largest advertised width when every candidate is
+smaller.  This keeps requests on the advertised set, so a level-0
+server (which serves only its `sizes') never receives a synthesized
+dimension it would answer with 404.  Returns a plist
+\(:width W :height H :segment SEG) where SEG is an Image API `size'
+segment, or nil when INFO advertises no sizes."
+  (when-let ((cands (xiiif-image--candidate-sizes info)))
+    (let* ((sorted (sort (copy-sequence cands)
+                         (lambda (a b) (< (car a) (car b)))))
+           (ceiling (cl-find-if (lambda (c) (>= (car c) target-width)) sorted))
+           (chosen (or ceiling (car (last sorted)))))
+      (list :width (car chosen)
+            :height (cdr chosen)
+            :segment (if (cdr chosen)
+                         (format "%s,%s" (car chosen) (cdr chosen))
+                       (format "%s," (car chosen)))))))
+
+(defun xiiif-image-info-level0-p (info)
+  "Return non-nil when INFO advertises IIIF Image API compliance level 0."
+  (equal (xiiif-image-info-compliance-level info) "level0"))
+
 (defun xiiif-image-fetch-info (service)
   "Fetch and parse the `info.json' for SERVICE synchronously.
 SERVICE is a `xiiif-image-service', a `xiiif-canvas', or a base URL.
@@ -246,11 +292,11 @@ defaults to the same reporter used by `xiiif-api-fetch-json-async'."
     (if (not url)
         (funcall (or errback #'xiiif-api--default-errback)
                  (list 'xiiif-error nil "no info.json URL"))
-      (xiiif-api-fetch-json-async
+      (xiiif-fetch-json
        url
        (lambda (json)
          (funcall callback (xiiif-image-parse-info json url)))
-       errback))))
+       :errback errback))))
 
 (provide 'xiiif-image)
 ;;; xiiif-image.el ends here

@@ -1,0 +1,16 @@
+{
+  "@context": "http://iiif.io/api/image/3/context.json",
+  "id": "https://example.org/iiif/image/level0-p1",
+  "type": "ImageService3",
+  "protocol": "http://iiif.io/api/image",
+  "profile": "level0",
+  "width": 4000,
+  "height": 3000,
+  "sizes": [
+    {"width": 250, "height": 188},
+    {"width": 500, "height": 375},
+    {"width": 1000, "height": 750},
+    {"width": 2000, "height": 1500}
+  ],
+  "preferredFormats": ["jpg"]
+}

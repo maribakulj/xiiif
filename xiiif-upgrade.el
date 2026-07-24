@@ -3,7 +3,7 @@
 ;; Copyright (C) 2026 The xiiif authors
 
 ;; Author: The xiiif authors
-;; Homepage: https://github.com/maribakulj/maribakulj/xiiif
+;; Homepage: https://github.com/maribakulj/xiiif
 ;; SPDX-License-Identifier: GPL-3.0-or-later
 
 ;;; Commentary:

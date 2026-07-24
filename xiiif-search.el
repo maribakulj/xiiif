@@ -21,7 +21,9 @@
 (require 'subr-x)
 (require 'tabulated-list)
 (require 'xiiif-core)
+(require 'xiiif-region)
 (require 'xiiif-api)
+(require 'xiiif-fetch)
 (require 'xiiif-cache)
 
 (defconst xiiif-search--buffer "*XIIIF Search*")
@@ -29,6 +31,12 @@
 (defconst xiiif-search--profile-regexp
   "iiif\\.io/api/search/1"
   "Regexp identifying a IIIF Search API 1.0 service profile.")
+
+(defcustom xiiif-search-max-pages 20
+  "Maximum number of Search API result pages followed via `next'.
+A safety bound on paginated result sets; nil follows every page."
+  :type '(choice (const :tag "No limit" nil) integer)
+  :group 'xiiif)
 
 
 ;;; ---------- service discovery ----------
@@ -58,7 +66,9 @@
 ;;; ---------- query + hit parsing ----------
 
 (cl-defstruct xiiif-search-hit
-  "A single Search API result." canvas-id chars before after raw)
+  "A single Search API result.
+REGION is the `xiiif-region' of the match on its canvas, or nil."
+  canvas-id region chars before after raw)
 
 (defun xiiif-search--hit-chars (annotation)
   "Return the matched text inside ANNOTATION's resource, or nil."
@@ -75,9 +85,16 @@
      ((stringp on)
       (car (split-string on "#" t)))
      ((consp on)
-      (or (xiiif--get on 'source)
-          (xiiif--get on 'full)
-          (xiiif--get on 'id))))))
+      (let ((base (or (xiiif--get on 'source)
+                      (xiiif--get on 'full)
+                      (xiiif--get on 'id))))
+        (and (stringp base) (car (split-string base "#" t))))))))
+
+(defun xiiif-search--hit-region (annotation)
+  "Return the `xiiif-region' of ANNOTATION's match, or nil."
+  (xiiif-region-from-target
+   (or (xiiif--get annotation 'on)
+       (xiiif--get annotation 'target))))
 
 (defun xiiif-search--context-for (annotation-id hits-context)
   "Return (:before :after) plist for ANNOTATION-ID from HITS-CONTEXT.
@@ -100,6 +117,7 @@ alongside the `resources'; each entry carries `annotations',
               (ctx (xiiif-search--context-for id context)))
          (make-xiiif-search-hit
           :canvas-id (xiiif-search--hit-target anno)
+          :region    (xiiif-search--hit-region anno)
           :chars     (xiiif-search--hit-chars anno)
           :before    (plist-get ctx :before)
           :after     (plist-get ctx :after)
@@ -114,17 +132,38 @@ alongside the `resources'; each entry carries `annotations',
   (concat (string-trim-right service-id "/?")
           "?q=" (url-hexify-string query)))
 
+(defun xiiif-search--next-url (json)
+  "Return the `next' page URL of a Search API response JSON, or nil."
+  (let ((next (xiiif--get json 'next)))
+    (cond
+     ((stringp next) next)
+     ((consp next) (xiiif--get next 'id)))))
+
 (defun xiiif-search-async (service-id query callback &optional errback)
   "Issue a Search API query against SERVICE-ID with QUERY.
-On success, CALLBACK receives the list of `xiiif-search-hit' structs.
-On failure, ERRBACK (defaulting to the standard xiiif reporter)
-receives (ERROR-SYMBOL URL &rest DATA)."
-  (let ((url (xiiif-search--url service-id query)))
-    (xiiif-api-fetch-json-async
-     url
-     (lambda (json)
-       (funcall callback (xiiif-search--parse json)))
-     errback)))
+Follows the response's `next' link up to `xiiif-search-max-pages',
+accumulating hits across pages.  On success, CALLBACK receives the
+combined list of `xiiif-search-hit' structs.  On failure, ERRBACK
+\(defaulting to the standard xiiif reporter) receives
+\(ERROR-SYMBOL URL &rest DATA)."
+  (xiiif-search--fetch-page
+   (xiiif-search--url service-id query) callback errback nil 1))
+
+(defun xiiif-search--fetch-page (url callback errback acc page)
+  "Fetch one Search page at URL, accumulating hits into ACC.
+Follows `next' until it is absent or PAGE reaches
+`xiiif-search-max-pages', then calls CALLBACK with the total."
+  (xiiif-fetch-json
+   url
+   (lambda (json)
+     (let ((acc (append acc (xiiif-search--parse json)))
+           (next (xiiif-search--next-url json)))
+       (if (and next
+                (or (null xiiif-search-max-pages)
+                    (< page xiiif-search-max-pages)))
+           (xiiif-search--fetch-page next callback errback acc (1+ page))
+         (funcall callback acc))))
+   :errback errback))
 
 
 ;;; ---------- UI ----------
@@ -140,8 +179,9 @@ receives (ERROR-SYMBOL URL &rest DATA)."
 (define-derived-mode xiiif-search-mode tabulated-list-mode "XIIIF-Search"
   "Major mode for IIIF Search 1.0 result buffers."
   (setq tabulated-list-format
-        [("Canvas" 40 t)
-         ("Match"  80 nil)])
+        [("Canvas" 32 t)
+         ("Region" 16 nil)
+         ("Match"  72 nil)])
   (setq tabulated-list-padding 2)
   (setq tabulated-list-sort-key nil)
   (tabulated-list-init-header))
@@ -161,6 +201,9 @@ receives (ERROR-SYMBOL URL &rest DATA)."
   "Build a tabulated-list entry for HIT within MANIFEST."
   (let* ((label (xiiif-search--canvas-short
                  (xiiif-search-hit-canvas-id hit) manifest))
+         (region (or (xiiif-region-to-string
+                      (xiiif-search-hit-region hit))
+                     ""))
          (match (mapconcat
                  #'identity
                  (delq nil
@@ -171,7 +214,7 @@ receives (ERROR-SYMBOL URL &rest DATA)."
                                    'face 'bold))
                              (xiiif-search-hit-after hit)))
                  "")))
-    (list hit (vector label (or match "")))))
+    (list hit (vector label region (or match "")))))
 
 (defun xiiif-search--render (manifest query hits)
   "Render HITS from a QUERY run against MANIFEST into the search buffer."
@@ -188,9 +231,13 @@ receives (ERROR-SYMBOL URL &rest DATA)."
              (length hits) (if (= 1 (length hits)) "" "s") query)))
 
 (declare-function xiiif-open-canvas "xiiif" (&optional canvas))
+(declare-function xiiif-view-load-canvas "xiiif-view"
+                  (manifest-url canvas-id service &optional region))
 
 (defun xiiif-search--open-at-point ()
-  "Jump to the canvas targeted by the search hit at point."
+  "Open the canvas targeted by the search hit at point.
+When the hit carries a region and the display is graphic, the region
+viewer opens on it; otherwise the canvas detail buffer does."
   (interactive)
   (let* ((hit (tabulated-list-get-id))
          (manifest xiiif-search--manifest))
@@ -201,7 +248,13 @@ receives (ERROR-SYMBOL URL &rest DATA)."
       (unless canvas
         (user-error "Canvas %s not resolvable in the current manifest"
                     (xiiif-search-hit-canvas-id hit)))
-      (xiiif-open-canvas canvas))))
+      (let ((region  (xiiif-search-hit-region hit))
+            (service (xiiif-canvas-image-service canvas)))
+        (if (and region service (display-graphic-p))
+            (xiiif-view-load-canvas
+             (xiiif-manifest-url manifest)
+             (xiiif-canvas-id canvas) service region)
+          (xiiif-open-canvas canvas))))))
 
 
 ;;; ---------- entry point ----------

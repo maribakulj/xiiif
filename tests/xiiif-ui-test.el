@@ -82,6 +82,38 @@
         (should (equal "http://x/c1" (xiiif-canvas-id id)))))))
 
 
+;;; ---- canvas browser marks survive refresh ----
+
+(defun xiiif-ui-test--manifest-2 ()
+  (make-xiiif-manifest
+   :url "http://x/m" :id "http://x/m" :type "Manifest" :label "M2"
+   :items '(((id . "http://x/c1") (type . "Canvas") (label . "Folio 1"))
+            ((id . "http://x/c2") (type . "Canvas") (label . "Folio 2")))
+   :raw '((id . "http://x/m") (type . "Manifest"))))
+
+(ert-deftest xiiif-ui/marks-reapplied-after-refresh ()
+  "A mark set in the canvas browser survives a re-render, by id."
+  (xiiif-ui-test--in-temp xiiif-ui--canvases-buffer
+    (xiiif-ui-render-canvases (xiiif-ui-test--manifest-2))
+    (with-current-buffer xiiif-ui--canvases-buffer
+      ;; Mark the second canvas.
+      (goto-char (point-min))
+      (forward-line 1)
+      (should (equal "http://x/c2"
+                     (xiiif-canvas-id (xiiif-ui--canvas-at-point))))
+      (tabulated-list-put-tag xiiif-ui--mark-tag)
+      (should (equal '("http://x/c2") (xiiif-ui--marked-canvas-ids)))
+      ;; Re-render (as `xiiif-refresh' does) and check the mark is back.
+      (xiiif-ui-render-canvases (xiiif-ui-test--manifest-2))
+      (should (equal '("http://x/c2") (xiiif-ui--marked-canvas-ids))))))
+
+(ert-deftest xiiif-ui/fresh-render-has-no-marks ()
+  (xiiif-ui-test--in-temp xiiif-ui--canvases-buffer
+    (xiiif-ui-render-canvases (xiiif-ui-test--manifest-2))
+    (with-current-buffer xiiif-ui--canvases-buffer
+      (should-not (xiiif-ui--marked-canvas-ids)))))
+
+
 ;;; ---- canvas detail fires the hook ----
 
 (ert-deftest xiiif-ui/canvas-detail-fires-hook ()
@@ -95,6 +127,105 @@
       (with-current-buffer xiiif-ui--canvas-buffer
         (should (derived-mode-p 'xiiif-canvas-mode))
         (should xiiif-ui--canvas)))))
+
+
+;;; ---- canvas detail thumbnail race ----
+
+(ert-deftest xiiif-ui/thumbnail-stale-response-dropped ()
+  "A thumbnail response arriving after the canvas buffer was
+re-rendered is dropped and the stale fetch cancelled (regression:
+the marker collapsed to `point-min' after `erase-buffer' and the
+image landed at the top of the new content)."
+  (let ((xiiif-ui-show-thumbnails t)
+        (xiiif-fetch-host-interval 0)
+        (xiiif-image-cache-enabled nil)
+        (captured nil)              ; (URL CALLBACK HANDLE), newest first
+        (cancelled nil))
+    (cl-letf (((symbol-function 'display-graphic-p)
+               (lambda (&optional _) t))
+              ((symbol-function 'xiiif-api-fetch-bytes-async)
+               (lambda (url callback &optional _errback)
+                 (let ((handle (generate-new-buffer " *thumb-stub*")))
+                   (push (list url callback handle) captured)
+                   handle)))
+              ((symbol-function 'xiiif-api-cancel)
+               (lambda (handle) (when handle (push handle cancelled)))))
+      (xiiif-ui-test--in-temp xiiif-ui--canvas-buffer
+        (unwind-protect
+            (progn
+              (xiiif-ui-render-canvas (xiiif-ui-test--canvas))
+              (xiiif-ui-render-canvas (xiiif-ui-test--canvas))
+              (should (= 2 (length captured)))
+              (pcase-let ((`(,_ ,cb2 ,h2) (nth 0 captured))
+                          (`(,_ ,cb1 ,h1) (nth 1 captured)))
+                ;; The re-render cancelled the first fetch (down to
+                ;; its transport handle) and stored the scheduler
+                ;; request wrapping the new one.
+                (should (memq h1 cancelled))
+                (should (eq h2 (xiiif-fetch--request-handle
+                                (buffer-local-value
+                                 'xiiif-ui--thumbnail-inflight
+                                 (get-buffer xiiif-ui--canvas-buffer)))))
+                ;; Late response from the first render: no insertion.
+                ;; (The fake bytes cannot be decoded, so an accepted
+                ;; response always shows the fallback text.)
+                (funcall cb1 "stale-bytes")
+                (with-current-buffer xiiif-ui--canvas-buffer
+                  (goto-char (point-min))
+                  (should-not
+                   (search-forward "could not render thumbnail" nil t)))
+                ;; Response for the current render lands at its marker,
+                ;; after the Thumbnail heading - exactly once.
+                (funcall cb2 "fresh-bytes")
+                (with-current-buffer xiiif-ui--canvas-buffer
+                  (goto-char (point-min))
+                  (should (search-forward "Thumbnail" nil t))
+                  (should
+                   (search-forward "could not render thumbnail" nil t))
+                  (should-not
+                   (search-forward "could not render thumbnail" nil t)))))
+          (xiiif-fetch-reset)
+          (dolist (entry captured)
+            (when (buffer-live-p (nth 2 entry))
+              (kill-buffer (nth 2 entry)))))))))
+
+
+;;; ---- annotations refresh ----
+
+(ert-deftest xiiif-ui/annotations-refresh-rerenders-annotations ()
+  "`g' in the annotations buffer re-collects the canvas annotations
+instead of falling back to the manifest overview (regression:
+`xiiif-refresh' has no annotations branch)."
+  (should (eq (lookup-key xiiif-annotations-mode-map (kbd "g"))
+              'xiiif-ui--annotations-refresh))
+  (let ((canvas (make-xiiif-canvas
+                 :id "http://x/c1"
+                 :label "Folio 1"
+                 :raw '((id . "http://x/c1")
+                        (type . "Canvas")
+                        (annotations
+                         .
+                         [((id . "http://x/ap")
+                           (type . "AnnotationPage")
+                           (items . [((id . "http://x/a1")
+                                      (motivation . "commenting")
+                                      (target . "http://x/c1")
+                                      (body . ((type . "TextualBody")
+                                               (value . "refreshed"))))]))])))))
+    (xiiif-ui-test--in-temp xiiif-ui--annotations-buffer
+      (xiiif-ui-render-annotations canvas nil)
+      (with-current-buffer xiiif-ui--annotations-buffer
+        (call-interactively #'xiiif-ui--annotations-refresh))
+      (with-current-buffer xiiif-ui--annotations-buffer
+        (should (derived-mode-p 'xiiif-annotations-mode))
+        (goto-char (point-min))
+        (should (search-forward "Annotations (1)" nil t))
+        (should (search-forward "refreshed" nil t))))))
+
+
+(ert-deftest xiiif-ui/annotations-refresh-requires-context ()
+  (with-temp-buffer
+    (should-error (xiiif-ui--annotations-refresh) :type 'user-error)))
 
 
 ;;; ---- collection browser ----

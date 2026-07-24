@@ -19,11 +19,42 @@
 
 (require 'cl-lib)
 (require 'subr-x)
+(require 'seq)
 (require 'xiiif-errors)
 
-(defcustom xiiif-preferred-languages '("en" "none" "und")
+(defconst xiiif--base-preferred-languages '("en" "none" "und")
+  "Language tags always tried when resolving IIIF language maps.")
+
+(defun xiiif--locale-language ()
+  "Return a two-letter language code from the locale environment, or nil.
+Reads `LC_ALL', `LC_MESSAGES' then `LANG' and extracts the leading
+language subtag (e.g. \"fr\" from \"fr_FR.UTF-8\")."
+  (let ((locale (seq-find (lambda (s) (and s (not (string-empty-p s))))
+                          (list (getenv "LC_ALL")
+                                (getenv "LC_MESSAGES")
+                                (getenv "LANG")))))
+    (when (and locale
+               (string-match "\\`\\([[:alpha:]]\\{2,3\\}\\)\\(?:[_.@-]\\|\\'\\)"
+                             locale))
+      (let ((code (downcase (match-string 1 locale))))
+        (unless (member code '("c" "posix"))
+          code)))))
+
+(defun xiiif--default-preferred-languages ()
+  "Return the default `xiiif-preferred-languages', locale first.
+The locale's language subtag is prepended to
+`xiiif--base-preferred-languages' when it is not already present, so
+a francophone user gets French labels ahead of English by default."
+  (let ((lang (xiiif--locale-language)))
+    (if (and lang (not (member lang xiiif--base-preferred-languages)))
+        (cons lang xiiif--base-preferred-languages)
+      xiiif--base-preferred-languages)))
+
+(defcustom xiiif-preferred-languages (xiiif--default-preferred-languages)
   "Preferred language tags when resolving IIIF language maps.
-The first tag for which a value is present wins."
+The first tag for which a value is present wins.  The default is
+derived from the locale (see `xiiif--default-preferred-languages'):
+the locale's language, then English, `none' and `und'."
   :type '(repeat string)
   :group 'xiiif)
 
@@ -303,20 +334,43 @@ Image objects) shapes."
          (xiiif--thumbnail-field-url (aref thumbnail 0))))
    ((consp thumbnail) (xiiif--get thumbnail 'id))))
 
-(defun xiiif-canvas-thumbnail-url (canvas &optional size)
+(defun xiiif-canvas-thumbnail-url (canvas &optional size info)
   "Return a URL string for a small preview of CANVAS, or nil.
 
 Preference order:
 1. an explicit `thumbnail' value declared by the canvas,
-2. a synthesized IIIF Image API derivative of the canvas image
-   service at SIZE (defaults to \"!200,200\")."
+2. an IIIF Image API derivative of the canvas image service.
+
+When INFO (a `xiiif-image-info') is supplied, the size segment is
+chosen from the server's advertised sizes via
+`xiiif-image-closest-size' - so the request stays valid on a
+level-0 server.  Absent INFO, SIZE (default \"!200,200\") is used,
+which suits level-1/2 servers.  The target width for the advertised
+lookup is derived from SIZE when it names one, else 200."
   (or (xiiif--thumbnail-field-url (xiiif-canvas-thumbnail canvas))
       (let* ((service (xiiif-canvas-image-service canvas))
              (base (and service (xiiif-image-service-id service))))
         (when base
-          (format "%s/full/%s/0/default.jpg"
-                  (string-trim-right base "/")
-                  (or size "!200,200"))))))
+          (let ((segment
+                 (or (and info
+                          (let* ((target (xiiif-canvas--thumbnail-target size))
+                                 (best (xiiif-image-closest-size info target)))
+                            (and best (concat "full/"
+                                              (plist-get best :segment)))))
+                     (concat "full/" (or size "!200,200")))))
+            (format "%s/%s/0/default.jpg"
+                    (string-trim-right base "/")
+                    segment))))))
+
+(defun xiiif-canvas--thumbnail-target (size)
+  "Return a numeric target width from a thumbnail SIZE segment.
+Understands \"!W,H\", \"W,H\", \"W,\" and \",H\"; defaults to 200."
+  (or (and (stringp size)
+           (string-match "\\([0-9]+\\)" size)
+           (string-to-number (match-string 1 size)))
+      200))
+
+(declare-function xiiif-image-closest-size "xiiif-image")
 
 
 

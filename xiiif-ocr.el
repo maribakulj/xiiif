@@ -19,7 +19,9 @@
 (require 'cl-lib)
 (require 'url)
 (require 'xiiif-core)
+(require 'xiiif-region)
 (require 'xiiif-api)
+(require 'xiiif-fetch)
 
 (defcustom xiiif-ocr-extract-text t
   "When non-nil, strip ALTO/hOCR markup to plain text on display."
@@ -143,6 +145,45 @@ FORMAT is `alto', `hocr' or anything else (returned verbatim)."
     (_ body)))
 
 
+;;; ---------- ALTO word boxes ----------
+
+(defun xiiif-ocr--alto-attr (tag name)
+  "Return the value of attribute NAME in the ALTO element TAG, or nil."
+  (and (string-match (format "\\b%s=\"\\([^\"]*\\)\"" name) tag)
+       (match-string 1 tag)))
+
+(defun xiiif-ocr--alto-attr-num (tag name)
+  "Return attribute NAME of TAG as a rounded integer, or nil."
+  (when-let ((s (xiiif-ocr--alto-attr tag name)))
+    (and (string-match-p "\\`[0-9]+\\(?:\\.[0-9]+\\)?\\'" s)
+         (round (string-to-number s)))))
+
+(defun xiiif-ocr-alto-boxes (xml)
+  "Return a list of (STRING . REGION) for every ALTO <String> in XML.
+REGION is a `xiiif-region' in the ALTO coordinate space, built from
+the HPOS/VPOS/WIDTH/HEIGHT attributes; entries missing any of those
+or the CONTENT are skipped.  Meant to back a future text-to-region
+overlay; the plain-text extraction of `xiiif-ocr--extract-alto' is
+unaffected."
+  (let ((boxes nil))
+    (with-temp-buffer
+      (insert xml)
+      (goto-char (point-min))
+      (while (re-search-forward "<String\\b[^>]*>" nil t)
+        (let* ((tag (match-string 0))
+               (content (xiiif-ocr--alto-attr tag "CONTENT"))
+               (hpos (xiiif-ocr--alto-attr-num tag "HPOS"))
+               (vpos (xiiif-ocr--alto-attr-num tag "VPOS"))
+               (width (xiiif-ocr--alto-attr-num tag "WIDTH"))
+               (height (xiiif-ocr--alto-attr-num tag "HEIGHT")))
+          (when (and content hpos vpos width height)
+            (push (cons content
+                        (make-xiiif-region :x hpos :y vpos
+                                           :w width :h height))
+                  boxes)))))
+    (nreverse boxes)))
+
+
 ;;; ---------- async fetch + extract ----------
 
 (defun xiiif-ocr-fetch-async (ref callback &optional errback)
@@ -155,7 +196,7 @@ ERRBACK receives (ERROR-SYMBOL URL &rest DATA) using the same shape
 as the rest of `xiiif-api'."
   (let ((url (plist-get ref :url))
         (format (plist-get ref :format)))
-    (xiiif-api-fetch-bytes-async
+    (xiiif-fetch-bytes
      url
      (lambda (bytes)
        (let* ((body (if (multibyte-string-p bytes)
@@ -166,7 +207,7 @@ as the rest of `xiiif-api'."
                       body)))
          (funcall callback
                   (append ref (list :body body :text text)))))
-     errback)))
+     :errback errback)))
 
 (provide 'xiiif-ocr)
 ;;; xiiif-ocr.el ends here

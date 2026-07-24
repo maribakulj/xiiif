@@ -39,6 +39,47 @@
   "Return the sample collection parsed into an alist."
   (xiiif-test--read-json xiiif-test--collection-fixture))
 
+;;; ---- locale-derived preferred languages ----
+
+(defmacro xiiif-core-test--with-locale (value &rest body)
+  "Run BODY with LANG/LC_ALL/LC_MESSAGES set to VALUE (or all cleared)."
+  (declare (indent 1) (debug t))
+  `(let ((process-environment (copy-sequence process-environment)))
+     (setenv "LC_ALL" nil)
+     (setenv "LC_MESSAGES" nil)
+     (setenv "LANG" ,value)
+     ,@body))
+
+(ert-deftest xiiif--locale-language/parses-lang ()
+  (xiiif-core-test--with-locale "fr_FR.UTF-8"
+    (should (equal "fr" (xiiif--locale-language))))
+  (xiiif-core-test--with-locale "de_DE.UTF-8"
+    (should (equal "de" (xiiif--locale-language))))
+  (xiiif-core-test--with-locale "en"
+    (should (equal "en" (xiiif--locale-language)))))
+
+(ert-deftest xiiif--locale-language/ignores-c-posix-and-empty ()
+  (xiiif-core-test--with-locale "C"
+    (should-not (xiiif--locale-language)))
+  (xiiif-core-test--with-locale "POSIX"
+    (should-not (xiiif--locale-language)))
+  (xiiif-core-test--with-locale nil
+    (should-not (xiiif--locale-language))))
+
+(ert-deftest xiiif--default-preferred-languages/prepends-locale ()
+  (xiiif-core-test--with-locale "fr_FR.UTF-8"
+    (should (equal '("fr" "en" "none" "und")
+                   (xiiif--default-preferred-languages))))
+  ;; English locale must not duplicate the base "en".
+  (xiiif-core-test--with-locale "en_US.UTF-8"
+    (should (equal '("en" "none" "und")
+                   (xiiif--default-preferred-languages))))
+  ;; No locale falls back to the base list.
+  (xiiif-core-test--with-locale nil
+    (should (equal '("en" "none" "und")
+                   (xiiif--default-preferred-languages)))))
+
+
 ;;; ---- label string ----
 
 (ert-deftest xiiif-label-string/nil ()
@@ -48,9 +89,12 @@
   (should (equal "hello" (xiiif-label-string "hello"))))
 
 (ert-deftest xiiif-label-string/language-map-prefers-en ()
-  (should (equal "Title"
-                 (xiiif-label-string
-                  '((en . ["Title"]) (fr . ["Titre"]))))))
+  ;; Pin the preference list so the assertion does not depend on the
+  ;; load-time locale-derived default.
+  (let ((xiiif-preferred-languages '("en" "none" "und")))
+    (should (equal "Title"
+                   (xiiif-label-string
+                    '((en . ["Title"]) (fr . ["Titre"])))))))
 
 (ert-deftest xiiif-label-string/language-map-falls-back ()
   (let ((xiiif-preferred-languages '("en" "none")))

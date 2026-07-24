@@ -119,5 +119,51 @@
        :type 'xiiif-http-error))))
 
 
+;;; ---- eviction ----
+
+(defun xiiif-http-cache-test--backdate (url seconds-ago)
+  "Set the mtime of URL's cache file SECONDS-AGO seconds in the past."
+  (set-file-times (xiiif-http-cache--entry-file url)
+                  (time-subtract (current-time)
+                                 (seconds-to-time seconds-ago))))
+
+(ert-deftest xiiif-http-cache/evicts-oldest-beyond-max-entries ()
+  (xiiif-http-cache-test--with-temp-dir
+    (let ((xiiif-http-cache-max-entries 2)
+          (xiiif-http-cache-max-bytes nil))
+      (xiiif-http-cache-store "http://x/a" "A")
+      (xiiif-http-cache-test--backdate "http://x/a" 100)
+      (xiiif-http-cache-store "http://x/b" "B")
+      (xiiif-http-cache-test--backdate "http://x/b" 50)
+      (xiiif-http-cache-store "http://x/c" "C")
+      (should-not (xiiif-http-cache-lookup "http://x/a"))
+      (should (xiiif-http-cache-lookup "http://x/b"))
+      (should (xiiif-http-cache-lookup "http://x/c")))))
+
+(ert-deftest xiiif-http-cache/evicts-oldest-beyond-max-bytes ()
+  (xiiif-http-cache-test--with-temp-dir
+    (let* ((xiiif-http-cache-max-entries nil)
+           (body (make-string 200 ?x))
+           ;; Each entry file is a printed plist around a 200-byte
+           ;; body; three of them cannot fit under 700 bytes.
+           (xiiif-http-cache-max-bytes 700))
+      (xiiif-http-cache-store "http://x/a" body)
+      (xiiif-http-cache-test--backdate "http://x/a" 100)
+      (xiiif-http-cache-store "http://x/b" body)
+      (xiiif-http-cache-test--backdate "http://x/b" 50)
+      (xiiif-http-cache-store "http://x/c" body)
+      (should-not (xiiif-http-cache-lookup "http://x/a"))
+      (should (xiiif-http-cache-lookup "http://x/c")))))
+
+(ert-deftest xiiif-http-cache/no-eviction-when-caps-nil ()
+  (xiiif-http-cache-test--with-temp-dir
+    (let ((xiiif-http-cache-max-entries nil)
+          (xiiif-http-cache-max-bytes nil))
+      (dotimes (i 5)
+        (xiiif-http-cache-store (format "http://x/%d" i) "B"))
+      (dotimes (i 5)
+        (should (xiiif-http-cache-lookup (format "http://x/%d" i)))))))
+
+
 (provide 'xiiif-http-cache-test)
 ;;; xiiif-http-cache-test.el ends here

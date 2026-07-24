@@ -12,6 +12,8 @@
 ;;; Code:
 
 (require 'ert)
+(require 'cl-lib)
+(require 'json)
 (require 'xiiif-api)
 
 (defun xiiif-api-test--with-response (raw thunk)
@@ -59,6 +61,130 @@
    (lambda ()
      (let ((result (xiiif-api--response-json "http://x")))
        (should (eq t (alist-get 'ok result)))))))
+
+;;; ---- native JSON parser ----
+
+(defconst xiiif-api-test--examples-dir
+  (expand-file-name
+   "../examples"
+   (file-name-directory (or load-file-name buffer-file-name))))
+
+(ert-deftest xiiif-api--parse-json/native-matches-legacy-on-fixtures ()
+  "The native `json-parse-string' configuration must produce shapes
+identical to the pure-Elisp reader on every bundled fixture."
+  (skip-unless (fboundp 'json-parse-string))
+  (let ((fixtures (directory-files
+                   xiiif-api-test--examples-dir t "\\.json\\'")))
+    (should fixtures)
+    (dolist (file fixtures)
+      (let* ((body (with-temp-buffer
+                     (insert-file-contents file)
+                     (buffer-string)))
+             (native (xiiif-api--parse-json body file))
+             (legacy (let ((json-object-type 'alist)
+                           (json-array-type  'vector)
+                           (json-key-type    'symbol)
+                           (json-false       :json-false)
+                           (json-null        nil))
+                       (json-read-from-string body))))
+        (should (equal native legacy))))))
+
+(ert-deftest xiiif-api--parse-json/shapes ()
+  "Objects are symbol-keyed alists, arrays vectors, false/null mapped."
+  (let ((parsed (xiiif-api--parse-json
+                 "{\"a\": [1, 2], \"b\": false, \"c\": null, \"d\": \"x\"}"
+                 "http://x")))
+    (should (equal [1 2] (alist-get 'a parsed)))
+    (should (eq :json-false (alist-get 'b parsed)))
+    (should (null (alist-get 'c parsed)))
+    (should (equal "x" (alist-get 'd parsed)))))
+
+
+;;; ---- body size guard ----
+
+(ert-deftest xiiif-api--response-json/oversized-body-rejected ()
+  (let ((xiiif-api-max-body-size 10))
+    (xiiif-api-test--with-response
+     "HTTP/1.1 200 OK\r\nContent-Length: 11\r\n\r\n{\"a\": 1234}"
+     (lambda ()
+       (let ((err (should-error (xiiif-api--response-json "http://x")
+                                :type 'xiiif-body-too-large)))
+         (should (equal '(xiiif-body-too-large "http://x" 11 10) err)))))))
+
+(ert-deftest xiiif-api--response-json/body-within-limit-parses ()
+  (let ((xiiif-api-max-body-size 1024))
+    (xiiif-api-test--with-response
+     "HTTP/1.1 200 OK\r\nContent-Length: 8\r\n\r\n{\"a\": 1}"
+     (lambda ()
+       (should (equal 1 (alist-get
+                         'a (xiiif-api--response-json "http://x"))))))))
+
+(ert-deftest xiiif-api--response-json/size-guard-disabled ()
+  (let ((xiiif-api-max-body-size nil))
+    (xiiif-api-test--with-response
+     "HTTP/1.1 200 OK\r\nContent-Length: 99999999\r\n\r\n{\"a\": 1}"
+     (lambda ()
+       (should (equal 1 (alist-get
+                         'a (xiiif-api--response-json "http://x"))))))))
+
+(ert-deftest xiiif-api-fetch-bytes-async/oversized-body-calls-errback ()
+  "The bytes path enforces the size guard before extracting the body."
+  (let ((xiiif-api-max-body-size 10)
+        (xiiif-api-backend 'url)
+        (captured nil))
+    (cl-letf (((symbol-function 'url-retrieve)
+               (lambda (_url callback &optional _cbargs _silent _inhibit)
+                 (let ((buf (generate-new-buffer " *xiiif-size-stub*")))
+                   (with-current-buffer buf
+                     (set-buffer-multibyte nil)
+                     (insert "HTTP/1.1 200 OK\r\n"
+                             "Content-Length: 999999\r\n\r\n"
+                             "bytes")
+                     (funcall callback nil))
+                   buf))))
+      (xiiif-api-fetch-bytes-async
+       "http://x/big.jpg"
+       (lambda (_bytes) (error "callback should not fire"))
+       (lambda (err) (setq captured err)))
+      (should (eq 'xiiif-body-too-large (nth 0 captured)))
+      (should (equal "http://x/big.jpg" (nth 1 captured)))
+      (should (equal '(999999 10) (nthcdr 2 captured))))))
+
+;;; ---- Retry-After exposure ----
+
+(ert-deftest xiiif-api--retry-after-seconds/shapes ()
+  (should (equal 120 (xiiif-api--retry-after-seconds "120")))
+  (should (equal 0 (xiiif-api--retry-after-seconds "0")))
+  ;; An HTTP date in the past clamps to 0.
+  (should (equal 0 (xiiif-api--retry-after-seconds
+                    "Wed, 21 Oct 2015 07:28:00 GMT")))
+  (should-not (xiiif-api--retry-after-seconds "soon"))
+  (should-not (xiiif-api--retry-after-seconds nil)))
+
+(ert-deftest xiiif-api--response-json/429-carries-retry-after ()
+  (xiiif-api-test--with-response
+   "HTTP/1.1 429 Too Many Requests\r\nRetry-After: 7\r\n\r\n{}"
+   (lambda ()
+     (let ((err (should-error (xiiif-api--response-json "http://x")
+                              :type 'xiiif-http-error)))
+       (should (equal '(xiiif-http-error "http://x" 429 :retry-after 7)
+                      err))))))
+
+(ert-deftest xiiif-api--response-json/error-without-retry-after ()
+  (xiiif-api-test--with-response
+   "HTTP/1.1 503 Service Unavailable\r\n\r\n{}"
+   (lambda ()
+     (let ((err (should-error (xiiif-api--response-json "http://x")
+                              :type 'xiiif-http-error)))
+       (should (equal '(xiiif-http-error "http://x" 503) err))))))
+
+
+(ert-deftest xiiif-api-error-hint/body-too-large ()
+  (should (string-match-p
+           "too large.*11 > 10 bytes"
+           (xiiif-api-error-hint
+            '(xiiif-body-too-large "http://x/m" 11 10)))))
+
 
 (ert-deftest xiiif-api-fetch-json-async/invalid-url-calls-errback ()
   (let (captured)

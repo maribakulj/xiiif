@@ -81,5 +81,42 @@
   (should (equal "raw text"
                  (xiiif-ocr-extract-text "raw text" 'text))))
 
+
+;;; ---- ALTO word boxes ----
+
+(ert-deftest xiiif-ocr-alto-boxes/parses-string-boxes ()
+  (let* ((xml (concat
+               "<TextLine>"
+               "<String CONTENT=\"hello\" HPOS=\"100\" VPOS=\"200\""
+               " WIDTH=\"80\" HEIGHT=\"30\"/>"
+               "<String CONTENT=\"world\" HPOS=\"190\" VPOS=\"200\""
+               " WIDTH=\"90\" HEIGHT=\"30\"/>"
+               "</TextLine>"))
+         (boxes (xiiif-ocr-alto-boxes xml)))
+    (should (= 2 (length boxes)))
+    (should (equal "hello" (car (nth 0 boxes))))
+    (let ((r (cdr (nth 0 boxes))))
+      (should (xiiif-region-p r))
+      (should (= 100 (xiiif-region-x r)))
+      (should (= 200 (xiiif-region-y r)))
+      (should (= 80 (xiiif-region-w r)))
+      (should (= 30 (xiiif-region-h r))))
+    (should (equal "world" (car (nth 1 boxes))))
+    (should (= 190 (xiiif-region-x (cdr (nth 1 boxes)))))))
+
+(ert-deftest xiiif-ocr-alto-boxes/skips-incomplete-strings ()
+  "A <String> missing a coordinate attribute is skipped."
+  (let ((xml (concat
+              "<String CONTENT=\"ok\" HPOS=\"1\" VPOS=\"2\" WIDTH=\"3\" HEIGHT=\"4\"/>"
+              "<String CONTENT=\"nocoords\"/>")))
+    (should (= 1 (length (xiiif-ocr-alto-boxes xml))))))
+
+(ert-deftest xiiif-ocr-alto-boxes/handles-decimal-coords ()
+  (let ((xml "<String CONTENT=\"x\" HPOS=\"10.6\" VPOS=\"20\" WIDTH=\"5\" HEIGHT=\"5\"/>"))
+    (should (= 11 (xiiif-region-x (cdr (car (xiiif-ocr-alto-boxes xml))))))))
+
+(ert-deftest xiiif-ocr-alto-boxes/empty-without-strings ()
+  (should-not (xiiif-ocr-alto-boxes "<alto></alto>")))
+
 (provide 'xiiif-ocr-test)
 ;;; xiiif-ocr-test.el ends here

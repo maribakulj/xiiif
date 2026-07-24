@@ -1,0 +1,52 @@
+{
+  "@context": "http://iiif.io/api/search/1/context.json",
+  "@id": "https://example.org/iiif/book1/search?q=lettrine",
+  "@type": "sc:AnnotationList",
+  "resources": [
+    {
+      "@id": "https://example.org/iiif/book1/anno/s1",
+      "@type": "oa:Annotation",
+      "motivation": "sc:painting",
+      "resource": {
+        "@type": "cnt:ContentAsText",
+        "chars": "lettrine"
+      },
+      "on": "https://example.org/iiif/book1/canvas/1#xywh=200,300,120,90"
+    },
+    {
+      "@id": "https://example.org/iiif/book1/anno/s2",
+      "@type": "oa:Annotation",
+      "motivation": "sc:painting",
+      "resource": {
+        "@type": "cnt:ContentAsText",
+        "chars": "ornee"
+      },
+      "on": {
+        "@type": "oa:SpecificResource",
+        "full": "https://example.org/iiif/book1/canvas/2",
+        "selector": {
+          "@type": "oa:FragmentSelector",
+          "value": "xywh=50,60,70,80"
+        }
+      }
+    }
+  ],
+  "hits": [
+    {
+      "@type": "search:Hit",
+      "annotations": [
+        "https://example.org/iiif/book1/anno/s1"
+      ],
+      "before": "grande ",
+      "after": " au chapitre"
+    },
+    {
+      "@type": "search:Hit",
+      "annotations": [
+        "https://example.org/iiif/book1/anno/s2"
+      ],
+      "before": "lettrine ",
+      "after": ""
+    }
+  ]
+}
