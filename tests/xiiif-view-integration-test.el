@@ -76,6 +76,21 @@
 
 ;;; ---- search RET routes region to viewer ----
 
+(defmacro xiiif-view-int--in-search-buffer (manifest hit &rest body)
+  "Run BODY at point on HIT in a real search tabulated-list buffer.
+`tabulated-list-get-id' is a defsubst inlined into the compiled
+`xiiif-search--open-at-point', so it cannot be stubbed; a genuine
+list entry whose id is HIT is used instead."
+  (declare (indent 2) (debug t))
+  `(with-temp-buffer
+     (xiiif-search-mode)
+     (setq-local xiiif-search--manifest ,manifest)
+     (setq tabulated-list-entries
+           (list (list ,hit (vector "canvas" "" "match"))))
+     (tabulated-list-print)
+     (goto-char (point-min))
+     ,@body))
+
 (ert-deftest xiiif-view-int/search-ret-with-region-opens-viewer ()
   (let* ((manifest (make-xiiif-manifest
                     :url "https://x/m" :id "https://x/m"
@@ -87,13 +102,11 @@
                :region (make-xiiif-region :x 200 :y 300 :w 120 :h 90)))
          (loaded nil))
     (cl-letf (((symbol-function 'display-graphic-p) (lambda (&rest _) t))
-              ((symbol-function 'tabulated-list-get-id) (lambda () hit))
               ((symbol-function 'xiiif-manifest-find-canvas)
                (lambda (_m _id) (xiiif-view-int--canvas t)))
               ((symbol-function 'xiiif-view-load-canvas)
                (lambda (m c s &optional r) (setq loaded (list m c s r)))))
-      (with-temp-buffer
-        (setq-local xiiif-search--manifest manifest)
+      (xiiif-view-int--in-search-buffer manifest hit
         (xiiif-search--open-at-point))
       (should (equal "https://x/m" (nth 0 loaded)))
       (should (xiiif-region-p (nth 3 loaded)))
@@ -104,15 +117,13 @@
          (hit (make-xiiif-search-hit :canvas-id "https://x/c/1" :region nil))
          (opened nil))
     (cl-letf (((symbol-function 'display-graphic-p) (lambda (&rest _) t))
-              ((symbol-function 'tabulated-list-get-id) (lambda () hit))
               ((symbol-function 'xiiif-manifest-find-canvas)
                (lambda (_m _id) (xiiif-view-int--canvas t)))
               ((symbol-function 'xiiif-open-canvas)
                (lambda (c) (setq opened c)))
               ((symbol-function 'xiiif-view-load-canvas)
                (lambda (&rest _) (error "must not open viewer"))))
-      (with-temp-buffer
-        (setq-local xiiif-search--manifest manifest)
+      (xiiif-view-int--in-search-buffer manifest hit
         (xiiif-search--open-at-point))
       (should (xiiif-canvas-p opened)))))
 
