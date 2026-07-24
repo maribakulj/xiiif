@@ -91,6 +91,14 @@ non-nil persists a bytes result in the image cache."
         :cache-hits 0)
   "Mutable counters behind `xiiif-fetch-stats'.")
 
+(defun xiiif-fetch--bump (key)
+  "Increment the stats counter KEY.
+Uses `plist-put' rather than `(cl-incf (plist-get ...))': the latter
+byte-compiles to a `(setf plist-get)' call that is void on Emacs 27."
+  (setq xiiif-fetch--stats
+        (plist-put xiiif-fetch--stats key
+                   (1+ (or (plist-get xiiif-fetch--stats key) 0)))))
+
 (defun xiiif-fetch--now ()
   "Current time as a float; isolated so tests can fake the clock."
   (float-time))
@@ -118,7 +126,7 @@ with zero network - and a fetched result is persisted for later
 revisits."
   (if-let ((hit (and cache (xiiif-image-cache-get url))))
       (progn
-        (cl-incf (plist-get xiiif-fetch--stats :cache-hits))
+        (xiiif-fetch--bump :cache-hits)
         (with-demoted-errors "xiiif-fetch callback error: %S"
           (funcall callback hit))
         nil)
@@ -204,7 +212,7 @@ requests.  CALLBACK, ERRBACK, PRIORITY and GROUP are as in
                          (xiiif-fetch--find kind url))))
       (cond
        (existing
-        (cl-incf (plist-get xiiif-fetch--stats :deduped))
+        (xiiif-fetch--bump :deduped)
         (push entry (xiiif-fetch--request-entries existing))
         (when cache
           (setf (xiiif-fetch--request-cache existing) t))
@@ -290,7 +298,7 @@ Schedules a deferred pump for the earliest time-blocked request."
   "Hand REQ to the transport and move it to the active set."
   (setq xiiif-fetch--queue (delq req xiiif-fetch--queue))
   (push req xiiif-fetch--active)
-  (cl-incf (plist-get xiiif-fetch--stats :started))
+  (xiiif-fetch--bump :started)
   (when-let ((host (xiiif-fetch--request-host req)))
     (puthash host (xiiif-fetch--now) xiiif-fetch--host-last))
   (let* ((url (xiiif-fetch--request-url req))
@@ -311,7 +319,7 @@ Schedules a deferred pump for the earliest time-blocked request."
   "Deliver RESULT to every caller of REQ and pump the queue."
   (when (memq req xiiif-fetch--active)
     (setq xiiif-fetch--active (delq req xiiif-fetch--active))
-    (cl-incf (plist-get xiiif-fetch--stats :completed))
+    (xiiif-fetch--bump :completed)
     (when (and (xiiif-fetch--request-cache req)
                (eq (xiiif-fetch--request-kind req) 'bytes))
       (xiiif-image-cache-put (xiiif-fetch--request-url req) result))
@@ -335,7 +343,7 @@ Schedules a deferred pump for the earliest time-blocked request."
              (< (xiiif-fetch--request-attempts req)
                 xiiif-fetch-max-retries))
         (cl-incf (xiiif-fetch--request-attempts req))
-        (cl-incf (plist-get xiiif-fetch--stats :retried))
+        (xiiif-fetch--bump :retried)
         (when-let ((host (xiiif-fetch--request-host req)))
           (puthash host
                    (+ (xiiif-fetch--now)
@@ -348,7 +356,7 @@ Schedules a deferred pump for the earliest time-blocked request."
         ;; Retry ahead of its queued peers.
         (push req xiiif-fetch--queue))
        (t
-        (cl-incf (plist-get xiiif-fetch--stats :failed))
+        (xiiif-fetch--bump :failed)
         (dolist (entry (reverse (xiiif-fetch--request-entries req)))
           (with-demoted-errors "xiiif-fetch errback error: %S"
             (funcall (plist-get entry :errback) err))))))
