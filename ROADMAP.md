@@ -36,8 +36,9 @@ items are deliberately speculative. Completed lines are marked
   manifest metadata (title, date, rights, provider). *(shipped)*
 - [x] **Annotation fetch.** `xiiif-show-annotations' resolves inline
   AnnotationPages and external references asynchronously, merging
-  results in document order into a read-only buffer. *(shipped)*
-  `AnnotationCollection' pagination (`next' pointers) remains TODO.
+  results in document order into a read-only buffer. External
+  `AnnotationCollection's are descended via `first' and paginated
+  through `next' (bounded by `xiiif-annotations-max-pages'). *(shipped)*
 - [x] **transcript/ALTO sidecars.** When a canvas's `seeAlso' links
   OCR (ALTO / hOCR / plain text), fetch it and display extracted
   text in a dedicated sidecar buffer. *(shipped)*
@@ -78,9 +79,6 @@ items are deliberately speculative. Completed lines are marked
   are out of scope for 0.x).
 - **SQLite-backed collection index.** Optional indexing of huge
   collections (10k+ manifests) behind a flag, Emacs 29+ only.
-- **AnnotationCollection pagination.** Follow `next' pointers in
-  annotation pages so transcriptions spanning many pages load
-  fully.
 
 Anything not on this list is fair game to propose. The rule is:
 if it earns its keep in a real workflow without dragging in

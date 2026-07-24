@@ -32,6 +32,12 @@
   "iiif\\.io/api/search/1"
   "Regexp identifying a IIIF Search API 1.0 service profile.")
 
+(defcustom xiiif-search-max-pages 20
+  "Maximum number of Search API result pages followed via `next'.
+A safety bound on paginated result sets; nil follows every page."
+  :type '(choice (const :tag "No limit" nil) integer)
+  :group 'xiiif)
+
 
 ;;; ---------- service discovery ----------
 
@@ -126,17 +132,38 @@ alongside the `resources'; each entry carries `annotations',
   (concat (string-trim-right service-id "/?")
           "?q=" (url-hexify-string query)))
 
+(defun xiiif-search--next-url (json)
+  "Return the `next' page URL of a Search API response JSON, or nil."
+  (let ((next (xiiif--get json 'next)))
+    (cond
+     ((stringp next) next)
+     ((consp next) (xiiif--get next 'id)))))
+
 (defun xiiif-search-async (service-id query callback &optional errback)
   "Issue a Search API query against SERVICE-ID with QUERY.
-On success, CALLBACK receives the list of `xiiif-search-hit' structs.
-On failure, ERRBACK (defaulting to the standard xiiif reporter)
-receives (ERROR-SYMBOL URL &rest DATA)."
-  (let ((url (xiiif-search--url service-id query)))
-    (xiiif-fetch-json
-     url
-     (lambda (json)
-       (funcall callback (xiiif-search--parse json)))
-     :errback errback)))
+Follows the response's `next' link up to `xiiif-search-max-pages',
+accumulating hits across pages.  On success, CALLBACK receives the
+combined list of `xiiif-search-hit' structs.  On failure, ERRBACK
+\(defaulting to the standard xiiif reporter) receives
+\(ERROR-SYMBOL URL &rest DATA)."
+  (xiiif-search--fetch-page
+   (xiiif-search--url service-id query) callback errback nil 1))
+
+(defun xiiif-search--fetch-page (url callback errback acc page)
+  "Fetch one Search page at URL, accumulating hits into ACC.
+Follows `next' until it is absent or PAGE reaches
+`xiiif-search-max-pages', then calls CALLBACK with the total."
+  (xiiif-fetch-json
+   url
+   (lambda (json)
+     (let ((acc (append acc (xiiif-search--parse json)))
+           (next (xiiif-search--next-url json)))
+       (if (and next
+                (or (null xiiif-search-max-pages)
+                    (< page xiiif-search-max-pages)))
+           (xiiif-search--fetch-page next callback errback acc (1+ page))
+         (funcall callback acc))))
+   :errback errback))
 
 
 ;;; ---------- UI ----------

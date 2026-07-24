@@ -176,5 +176,110 @@ exactly once (regression: once per errback plus the post-loop check)."
     (should (null got))))
 
 
+;;; ---- external reference pagination ----
+
+(defvar xiiif-annotations-page-test--pages nil
+  "Alist of URL -> JSON string served by the paging stub.")
+
+(defmacro xiiif-annotations-page-test--with (pages &rest body)
+  "Serve PAGES synchronously by stubbing `xiiif-fetch-json'."
+  (declare (indent 1) (debug (form body)))
+  `(let ((xiiif-annotations-page-test--pages ,pages))
+     (cl-letf (((symbol-function 'xiiif-fetch-json)
+                (lambda (url callback &rest _)
+                  (let ((json (cdr (assoc url xiiif-annotations-page-test--pages))))
+                    (unless json (error "no page fixture for %s" url))
+                    (funcall callback
+                             (let ((json-object-type 'alist)
+                                   (json-array-type 'vector)
+                                   (json-key-type 'symbol)
+                                   (json-false :json-false)
+                                   (json-null nil))
+                               (json-read-from-string json)))))))
+       ,@body)))
+
+(defun xiiif-annotations-page-test--anno (id value)
+  (format "{\"id\":\"%s\",\"motivation\":\"commenting\",\"target\":\"http://x/c1\",\"body\":{\"type\":\"TextualBody\",\"value\":\"%s\"}}"
+          id value))
+
+(defun xiiif-annotations-page-test--page (id items &optional next)
+  (format "{\"id\":\"%s\",\"type\":\"AnnotationPage\",\"items\":[%s]%s}"
+          id (mapconcat #'identity items ",")
+          (if next (format ",\"next\":\"%s\"" next) "")))
+
+(ert-deftest xiiif-annotations-fetch-ref/follows-page-next-chain ()
+  (require 'json)
+  (let ((got nil))
+    (xiiif-annotations-page-test--with
+        (list (cons "http://x/p1"
+                    (xiiif-annotations-page-test--page
+                     "http://x/p1"
+                     (list (xiiif-annotations-page-test--anno "a1" "one"))
+                     "http://x/p2"))
+              (cons "http://x/p2"
+                    (xiiif-annotations-page-test--page
+                     "http://x/p2"
+                     (list (xiiif-annotations-page-test--anno "a2" "two")))))
+      (xiiif-annotations-fetch-ref "http://x/p1"
+                                   (lambda (a) (setq got a))
+                                   #'ignore))
+    (should (equal '("one" "two")
+                   (mapcar #'xiiif-annotation-body-value got)))))
+
+(ert-deftest xiiif-annotations-fetch-ref/descends-collection-first ()
+  (require 'json)
+  (let ((got nil))
+    (xiiif-annotations-page-test--with
+        (list (cons "http://x/coll"
+                    "{\"id\":\"http://x/coll\",\"type\":\"AnnotationCollection\",\"first\":\"http://x/p1\"}")
+              (cons "http://x/p1"
+                    (xiiif-annotations-page-test--page
+                     "http://x/p1"
+                     (list (xiiif-annotations-page-test--anno "a1" "one"))
+                     "http://x/p2"))
+              (cons "http://x/p2"
+                    (xiiif-annotations-page-test--page
+                     "http://x/p2"
+                     (list (xiiif-annotations-page-test--anno "a2" "two")))))
+      (xiiif-annotations-fetch-ref "http://x/coll"
+                                   (lambda (a) (setq got a))
+                                   #'ignore))
+    (should (equal '("one" "two")
+                   (mapcar #'xiiif-annotation-body-value got)))))
+
+(ert-deftest xiiif-annotations-fetch-ref/collection-embedded-first ()
+  (require 'json)
+  (let ((got nil))
+    (xiiif-annotations-page-test--with
+        (list (cons "http://x/coll"
+                    (format "{\"id\":\"http://x/coll\",\"type\":\"AnnotationCollection\",\"first\":%s}"
+                            (xiiif-annotations-page-test--page
+                             "http://x/p1"
+                             (list (xiiif-annotations-page-test--anno "a1" "solo"))))))
+      (xiiif-annotations-fetch-ref "http://x/coll"
+                                   (lambda (a) (setq got a))
+                                   #'ignore))
+    (should (equal '("solo") (mapcar #'xiiif-annotation-body-value got)))))
+
+(ert-deftest xiiif-annotations-fetch-ref/honours-max-pages ()
+  (require 'json)
+  (let ((got nil)
+        (xiiif-annotations-max-pages 1))
+    (xiiif-annotations-page-test--with
+        (list (cons "http://x/p1"
+                    (xiiif-annotations-page-test--page
+                     "http://x/p1"
+                     (list (xiiif-annotations-page-test--anno "a1" "one"))
+                     "http://x/p2"))
+              (cons "http://x/p2"
+                    (xiiif-annotations-page-test--page
+                     "http://x/p2"
+                     (list (xiiif-annotations-page-test--anno "a2" "two")))))
+      (xiiif-annotations-fetch-ref "http://x/p1"
+                                   (lambda (a) (setq got a))
+                                   #'ignore))
+    (should (equal '("one") (mapcar #'xiiif-annotation-body-value got)))))
+
+
 (provide 'xiiif-annotations-collect-test)
 ;;; xiiif-annotations-collect-test.el ends here

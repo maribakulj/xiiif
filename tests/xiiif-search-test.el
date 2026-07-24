@@ -134,5 +134,79 @@ a structured `on'/`full' + `selector'."
         (should (= 80 (xiiif-region-h r)))))))
 
 
+;;; ---- pagination ----
+
+(ert-deftest xiiif-search--next-url/shapes ()
+  (should (equal "http://x/p2"
+                 (xiiif-search--next-url '((next . "http://x/p2")))))
+  (should (equal "http://x/p2"
+                 (xiiif-search--next-url '((next . ((id . "http://x/p2")))))))
+  (should-not (xiiif-search--next-url '((resources . [])))))
+
+(defvar xiiif-search-test--pages nil
+  "Alist of URL -> response JSON string for the paging stub.")
+
+(defmacro xiiif-search-test--with-pages (pages &rest body)
+  "Bind PAGES and stub `xiiif-fetch-json' to serve them synchronously."
+  (declare (indent 1) (debug (form body)))
+  `(let ((xiiif-search-test--pages ,pages))
+     (cl-letf (((symbol-function 'xiiif-fetch-json)
+                (lambda (url callback &rest _)
+                  (let ((json (cdr (assoc url xiiif-search-test--pages))))
+                    (funcall callback
+                             (let ((json-object-type 'alist)
+                                   (json-array-type 'vector)
+                                   (json-key-type 'symbol)
+                                   (json-false :json-false)
+                                   (json-null nil))
+                               (json-read-from-string json)))))))
+       ,@body)))
+
+(ert-deftest xiiif-search-async/follows-next-and-accumulates ()
+  (require 'json)
+  (let ((hits nil))
+    (xiiif-search-test--with-pages
+        '(("http://x/search?q=foo"
+           . "{\"resources\":[{\"@id\":\"http://x/a1\",\"resource\":{\"chars\":\"one\"},\"on\":\"http://x/c1\"}],\"next\":\"http://x/search?q=foo&page=2\"}")
+          ("http://x/search?q=foo&page=2"
+           . "{\"resources\":[{\"@id\":\"http://x/a2\",\"resource\":{\"chars\":\"two\"},\"on\":\"http://x/c2\"}]}"))
+      (cl-letf (((symbol-function 'xiiif-search--url)
+                 (lambda (&rest _) "http://x/search?q=foo")))
+        (xiiif-search-async "http://x/search" "foo"
+                            (lambda (hs) (setq hits hs)))))
+    (should (= 2 (length hits)))
+    (should (equal '("one" "two")
+                   (mapcar #'xiiif-search-hit-chars hits)))))
+
+(ert-deftest xiiif-search-async/honours-max-pages ()
+  (require 'json)
+  (let ((hits nil)
+        (xiiif-search-max-pages 1))
+    (xiiif-search-test--with-pages
+        '(("http://x/search?q=foo"
+           . "{\"resources\":[{\"@id\":\"http://x/a1\",\"resource\":{\"chars\":\"one\"},\"on\":\"http://x/c1\"}],\"next\":\"http://x/search?q=foo&page=2\"}")
+          ("http://x/search?q=foo&page=2"
+           . "{\"resources\":[{\"@id\":\"http://x/a2\",\"resource\":{\"chars\":\"two\"},\"on\":\"http://x/c2\"}]}"))
+      (cl-letf (((symbol-function 'xiiif-search--url)
+                 (lambda (&rest _) "http://x/search?q=foo")))
+        (xiiif-search-async "http://x/search" "foo"
+                            (lambda (hs) (setq hits hs)))))
+    ;; Stopped after the first page.
+    (should (= 1 (length hits)))
+    (should (equal '("one") (mapcar #'xiiif-search-hit-chars hits)))))
+
+(ert-deftest xiiif-search-async/single-page-no-next ()
+  (require 'json)
+  (let ((hits :unset))
+    (xiiif-search-test--with-pages
+        '(("http://x/search?q=foo"
+           . "{\"resources\":[{\"@id\":\"http://x/a1\",\"resource\":{\"chars\":\"one\"},\"on\":\"http://x/c1\"}]}"))
+      (cl-letf (((symbol-function 'xiiif-search--url)
+                 (lambda (&rest _) "http://x/search?q=foo")))
+        (xiiif-search-async "http://x/search" "foo"
+                            (lambda (hs) (setq hits hs)))))
+    (should (= 1 (length hits)))))
+
+
 (provide 'xiiif-search-test)
 ;;; xiiif-search-test.el ends here

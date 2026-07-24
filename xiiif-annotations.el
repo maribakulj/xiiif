@@ -11,8 +11,9 @@
 ;; Fetch and normalize IIIF non-painting annotations declared in a
 ;; canvas's `annotations' array (v3) - typically commenting, tagging
 ;; or transcribing bodies referencing the canvas as their target.
-;; Only `AnnotationPage' items are handled; a bare
-;; `AnnotationCollection' reference is a later task (pagination).
+;; Both inline and external `AnnotationPage' references are handled,
+;; as is an external `AnnotationCollection', descended via `first'
+;; and paginated through `next' up to `xiiif-annotations-max-pages'.
 
 ;;; Code:
 
@@ -93,8 +94,8 @@ annotation targets the whole canvas."
 Each entry is a plist:
   (:inline PAGE-JSON :url nil)   when the page is embedded, or
   (:inline nil       :url URL)   when only a URL reference is present.
-Only AnnotationPage entries are recognised; AnnotationCollection
-objects without inline items are returned as external URL refs."
+An AnnotationCollection without inline items is returned as an
+external URL ref; `xiiif-annotations-fetch-ref' paginates it."
   (let ((annos (xiiif--as-list
                 (xiiif--get (xiiif-canvas-raw canvas) 'annotations))))
     (mapcar (lambda (a)
@@ -141,15 +142,80 @@ the count to zero while later fetches are still waiting to start."
                            (apply #'append (append slots nil)))))))
         (dolist (spec (nreverse fetches))
           (let ((idx (car spec)))
-            (xiiif-fetch-json
+            (xiiif-annotations-fetch-ref
              (cdr spec)
-             (lambda (json)
-               (aset slots idx (xiiif-parse-annotation-page json))
+             (lambda (annos)
+               (aset slots idx annos)
                (when (zerop (cl-decf pending)) (funcall finish)))
-             :errback
              (lambda (_err)
                (aset slots idx nil)
                (when (zerop (cl-decf pending)) (funcall finish))))))))))
+
+
+;;; ---------- external reference fetch with pagination ----------
+
+(defcustom xiiif-annotations-max-pages 20
+  "Maximum number of AnnotationPage links followed via `next'.
+A safety bound on paginated AnnotationCollections; nil follows
+every page."
+  :type '(choice (const :tag "No limit" nil) integer)
+  :group 'xiiif)
+
+(defun xiiif-annotations--page-next (json)
+  "Return the `next' AnnotationPage URL of JSON, or nil."
+  (let ((next (xiiif--get json 'next)))
+    (cond
+     ((stringp next) next)
+     ((consp next) (xiiif--get next 'id)))))
+
+(defun xiiif-annotations--collection-first (json)
+  "Return the `first' page of an AnnotationCollection JSON, or nil.
+The value is a page URL string, an embedded AnnotationPage object,
+or nil when JSON is not an AnnotationCollection."
+  (when (equal (xiiif--normalize-type (xiiif--get json 'type))
+               "AnnotationCollection")
+    (let ((first (xiiif--get json 'first)))
+      (cond
+       ((stringp first) first)
+       ((consp first) first)))))
+
+(defun xiiif-annotations-fetch-ref (url callback errback)
+  "Fetch an external annotation reference URL and call CALLBACK.
+Handles a plain AnnotationPage (optionally chained by `next') and an
+AnnotationCollection (descended via `first', then `next'), following
+at most `xiiif-annotations-max-pages' pages.  CALLBACK receives the
+combined list of `xiiif-annotation' structs."
+  (xiiif-fetch-json
+   url
+   (lambda (json)
+     (xiiif-annotations--follow json callback errback nil 1))
+   :errback errback))
+
+(defun xiiif-annotations--follow (json callback errback acc page)
+  "Process an AnnotationPage/Collection JSON, accumulating into ACC.
+Descends an AnnotationCollection to its first page, then follows the
+`next' chain up to `xiiif-annotations-max-pages'."
+  (let ((first (xiiif-annotations--collection-first json)))
+    (cond
+     ((stringp first)
+      (xiiif-fetch-json
+       first
+       (lambda (j) (xiiif-annotations--follow j callback errback acc page))
+       :errback errback))
+     (first
+      (xiiif-annotations--follow first callback errback acc page))
+     (t
+      (let ((acc (append acc (xiiif-parse-annotation-page json)))
+            (next (xiiif-annotations--page-next json)))
+        (if (and next
+                 (or (null xiiif-annotations-max-pages)
+                     (< page xiiif-annotations-max-pages)))
+            (xiiif-fetch-json
+             next
+             (lambda (j)
+               (xiiif-annotations--follow j callback errback acc (1+ page)))
+             :errback errback)
+          (funcall callback acc)))))))
 
 (provide 'xiiif-annotations)
 ;;; xiiif-annotations.el ends here
