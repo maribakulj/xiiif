@@ -39,6 +39,8 @@
                  xiiif-cache-clear-http
                  xiiif-open-in-mirador
                  xiiif-open-content-state
+                 xiiif-annot-create
+                 xiiif-annot-visit
                  xiiif-search
                  xiiif-upgrade-manifest
                  xiiif-upgrade-collection))

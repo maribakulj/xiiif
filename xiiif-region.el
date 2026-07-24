@@ -132,6 +132,18 @@ trailing `%'."
               (funcall fmt (xiiif-region-h region))
               (if (eq (xiiif-region-unit region) 'percent) "%" "")))))
 
+(defun xiiif-region-from-string (string)
+  "Parse STRING produced by `xiiif-region-to-string' into a region.
+STRING is \"X,Y,W,H\" (pixel) or \"X,Y,W,H%\" (percent).  Returns nil
+when STRING is not a region."
+  (when (and (stringp string) (not (string-empty-p (string-trim string))))
+    (let* ((trimmed (string-trim string))
+           (percent (string-suffix-p "%" trimmed))
+           (core (if percent (substring trimmed 0 -1) trimmed)))
+      (when-let ((r (xiiif-region--parse-xywh core)))
+        (setf (xiiif-region-unit r) (if percent 'percent 'pixel))
+        r))))
+
 (defun xiiif-region-to-fragment (region)
   "Return REGION as a Media Fragments value, or nil.
 A pixel region becomes \"xywh=X,Y,W,H\"; a percent region becomes

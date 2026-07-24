@@ -62,6 +62,7 @@
 (require 'xiiif-sources)
 (require 'xiiif-ui)
 (require 'xiiif-org)
+(require 'xiiif-annot)
 (require 'xiiif-cite)
 (require 'xiiif-upgrade)
 (require 'xiiif-search)

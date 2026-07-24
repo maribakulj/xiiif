@@ -17,6 +17,8 @@
 
 (require 'subr-x)
 (require 'xiiif-core)
+(require 'xiiif-region)
+(require 'xiiif-anchor)
 (require 'xiiif-image)
 (require 'xiiif-cache)
 
@@ -59,8 +61,11 @@ The link target is the canvas ID if available, otherwise the manifest URL."
       (xiiif-org--link url (or description
                                (xiiif-canvas-title canvas))))))
 
-(defun xiiif-org-metadata-block (manifest &optional canvas)
-  "Return an Org metadata block for MANIFEST and optional CANVAS as a string."
+(defun xiiif-org-metadata-block (manifest &optional canvas region)
+  "Return an Org metadata block for MANIFEST and optional CANVAS as a string.
+When CANVAS is set, the block also carries its id, the default image
+URL, and - so the location is recoverable - a Content State token
+for the canvas (plus REGION, a `xiiif-region', when given)."
   (let ((lines (list "#+begin_xiiif")))
     (push (format ":title: %s" (xiiif-manifest-title manifest)) lines)
     (when (xiiif-manifest-url manifest)
@@ -69,8 +74,19 @@ The link target is the canvas ID if available, otherwise the manifest URL."
       (push (format ":canvas-label: %s" (xiiif-canvas-title canvas)) lines)
       (when (xiiif-canvas-id canvas)
         (push (format ":canvas-id: %s" (xiiif-canvas-id canvas)) lines))
+      (when region
+        (push (format ":region: %s" (xiiif-region-to-string region)) lines))
       (when-let ((img (xiiif-image-url canvas)))
-        (push (format ":image: %s" img) lines)))
+        (push (format ":image: %s" img) lines))
+      (when (xiiif-canvas-id canvas)
+        (let ((anchor (xiiif-anchor-create
+                       :manifest (or (xiiif-manifest-url manifest)
+                                     (xiiif-manifest-id manifest))
+                       :canvas (xiiif-canvas-id canvas)
+                       :region region)))
+          (push (format ":content-state: %s"
+                        (xiiif-content-state-encode anchor))
+                lines))))
     (push ":notes:" lines)
     (push "#+end_xiiif" lines)
     (mapconcat #'identity (nreverse lines) "\n")))

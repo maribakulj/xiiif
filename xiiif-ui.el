@@ -313,6 +313,7 @@
     (define-key map (kbd "y")   #'xiiif-copy-image-url)
     (define-key map (kbd "d")   #'xiiif-download-image)
     (define-key map (kbd "v")   #'xiiif-view-canvas)
+    (define-key map (kbd "n")   #'xiiif-annot-create)
     (define-key map (kbd "i")   #'xiiif-insert-org-link)
     (define-key map (kbd "I")   #'xiiif-show-info-json)
     (define-key map (kbd "a")   #'xiiif-show-annotations)
@@ -406,8 +407,8 @@ fetches a small preview asynchronously and inserts it at the end."
       (let ((inhibit-read-only t))
         (erase-buffer)
         (xiiif-ui--insert-hints
-         '(("v" . "view") ("y" . "copy URL") ("d" . "download")
-           ("i" . "org link") ("I" . "info.json")
+         '(("v" . "view") ("n" . "note") ("y" . "copy URL")
+           ("d" . "download") ("i" . "org link") ("I" . "info.json")
            ("J" . "raw JSON") ("q" . "quit")))
         (xiiif-ui--insert-heading (xiiif-canvas-title canvas))
         (xiiif-ui--insert-field "ID"     (xiiif-canvas-id canvas))
@@ -778,6 +779,7 @@ The actual transfer runs asynchronously so Emacs stays responsive."
 (declare-function xiiif-show-structures "xiiif")
 (declare-function xiiif-view-canvas "xiiif" (&optional canvas))
 (declare-function xiiif-open-canvas "xiiif" (&optional canvas))
+(declare-function xiiif-annot-create "xiiif-annot" ())
 (declare-function xiiif-view-load-canvas "xiiif-view"
                   (manifest-url canvas-id service &optional region))
 (defvar xiiif-current-manifest)
