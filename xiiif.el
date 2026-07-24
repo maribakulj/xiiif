@@ -63,6 +63,7 @@
 (require 'xiiif-ui)
 (require 'xiiif-org)
 (require 'xiiif-annot)
+(require 'xiiif-batch)
 (require 'xiiif-cite)
 (require 'xiiif-upgrade)
 (require 'xiiif-search)
