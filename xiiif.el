@@ -4,7 +4,7 @@
 
 ;; Author: The xiiif authors
 ;; Maintainer: The xiiif authors
-;; Version: 0.3.0
+;; Version: 0.4.0
 ;; Package-Requires: ((emacs "27.1"))
 ;; Homepage: https://github.com/maribakulj/xiiif
 ;; Keywords: hypermedia, multimedia, iiif, digital-humanities
@@ -74,7 +74,7 @@
   :prefix "xiiif-"
   :link '(url-link "https://github.com/maribakulj/xiiif"))
 
-(defconst xiiif-version "0.3.0"
+(defconst xiiif-version "0.4.0"
   "Current version of the xiiif package.")
 
 

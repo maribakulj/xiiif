@@ -41,6 +41,9 @@ upstream servers.
 - [Collections](#collections)
 - [IIIF Image API URLs](#iiif-image-api-urls)
 - [Org integration](#org-integration)
+- [Region viewer](#region-viewer)
+- [Anchors and Content State](#anchors-and-content-state)
+- [Scripting](#scripting)
 - [Internal data model](#internal-data-model)
 - [Architecture](#architecture)
 - [Customization](#customization)
@@ -77,11 +80,11 @@ Typical use cases:
 
 | Field           | Value                                                        |
 | --------------- | ------------------------------------------------------------ |
-| Version         | `0.3.0`                                                      |
-| Stability       | Feature-complete for 0.3; APIs may still shift before 1.0    |
+| Version         | `0.4.0`                                                      |
+| Stability       | Feature-complete for 0.4; APIs may still shift before 1.0    |
 | Emacs           | 27.1 or newer                                                |
-| Built on        | `url.el`, `json.el`, `tabulated-list`, `cl-lib`, `auth-source` (for `:auth` profiles) |
-| External deps   | none                                                         |
+| Built on        | `url.el`, `json.el`, `tabulated-list`, `cl-lib`, `image`, `auth-source` (for `:auth` profiles) |
+| External deps   | none (optional: `plz` for a curl-based HTTP backend)         |
 | License         | GPL-3.0-or-later                                             |
 
 ## Installation
@@ -161,7 +164,10 @@ All commands are autoloaded.
 | `xiiif-show-annotations`    | Fetch and display non-painting annotations for the current canvas. |
 | `xiiif-show-ocr`            | Fetch and display an ALTO/hOCR/plain-text OCR sidecar.           |
 | `xiiif-search`              | Query the current manifest's IIIF Search 1.0 service.            |
-| `xiiif-open-in-mirador`     | Open the current manifest in an external Mirador viewer.         |
+| `xiiif-view-canvas`         | Open the step-by-step region viewer on a canvas (`v`).           |
+| `xiiif-annot-create`        | Create an anchored note for the current view or canvas (`n`).    |
+| `xiiif-open-in-mirador`     | Open the current view (canvas+region) in an external Mirador.    |
+| `xiiif-open-content-state`  | Open a location from a IIIF Content State token or URL.          |
 | `xiiif-insert-org-link`     | Insert a manifest, canvas, image link, or metadata block.        |
 | `xiiif-export-citation`     | Export the manifest as BibTeX or CSL-JSON (insert or kill-ring). |
 
@@ -179,6 +185,7 @@ All commands are autoloaded.
 | `xiiif-cache-clear-http`    | Wipe the on-disk HTTP response cache.                            |
 | `xiiif-upgrade-manifest`    | Return a canonical v3-shaped alist from a v2/v3 manifest JSON.   |
 | `xiiif-upgrade-collection`  | Return a canonical v3-shaped alist from a v2/v3 collection JSON. |
+| `xiiif-annot-visit`         | Reopen the location recorded in the Org entry at point.         |
 
 ## Buffers and keymaps
 
@@ -196,6 +203,7 @@ share a vocabulary of keys.
 | `*XIIIF Annotations*`  | `xiiif-annotations-mode`   | `special-mode`         |
 | `*XIIIF OCR*`          | `xiiif-ocr-mode`           | `special-mode`         |
 | `*XIIIF Search*`       | `xiiif-search-mode`        | `tabulated-list-mode`  |
+| `*XIIIF View*`         | `xiiif-view-mode`          | `special-mode`         |
 
 Common bindings:
 
@@ -205,6 +213,8 @@ Common bindings:
 | `o`   | Same as `RET` in list buffers                                  |
 | `y`   | Copy the contextually useful URL                               |
 | `d`   | Download the contextual image (canvas browser, canvas detail)  |
+| `v`   | Open the region viewer for the canvas (canvas browser, canvas detail) |
+| `n`   | Create an anchored note for the canvas (canvas detail)         |
 | `m` / `u` / `U` / `t` | Mark / unmark / unmark-all / toggle-mark a canvas (canvas browser) |
 | `D`   | Bulk-download every marked canvas (canvas browser)             |
 | `i`   | Insert an Org link (or copy to kill-ring in read-only buffers) |
@@ -217,6 +227,12 @@ Common bindings:
 | `c`   | Jump to canvas browser (manifest overview)                     |
 | `s`   | Open the structural navigator (manifest overview, if any)      |
 | `n/p` | Next / previous structure entry (structures buffer)            |
+| `RET` | Open the viewer on a hit/annotation that carries a region      |
+
+The region viewer (`*XIIIF View*`) has its own keys: arrows or
+`hjkl` pan (half a screen, `C-u` for a fine step), `+`/`-`/`0` zoom
+in / out / reset, `y` copy the exact view URL, `M` hand off to
+Mirador, `a` create an anchored note, `g` reload, `q` quit.
 
 `i` does the right thing depending on the buffer: when the current
 buffer is writable (like an Org buffer you've switched to), the link
@@ -393,6 +409,107 @@ Both helpers signal `user-error` when no manifest is loaded, so the
 capture template fails loudly instead of silently writing an empty
 note.
 
+## Region viewer
+
+`xiiif` deliberately has no continuous deep-zoom viewer — Emacs's
+single-threaded redisplay cannot do 60fps GPU zoom, and that is not
+the goal. What it does have is a careful *step-by-step* region
+viewer for close reading and supervision, with a precise handoff to
+Mirador for the rest.
+
+`xiiif-view-canvas` (`v` in the canvas detail or browser) opens
+`*XIIIF View*` on a canvas. It fetches the image `info.json`, derives
+a zoom scale table from the advertised `sizes`/`tiles` (or a
+`1/16 … 1` default), and shows one region at a time:
+
+| Key            | Action                                              |
+| -------------- | --------------------------------------------------- |
+| arrows / `hjkl`| Pan by half a screen (`C-u` for a fine step)        |
+| `+` / `-` / `0`| Zoom in / out / reset to the whole canvas           |
+| `y`            | Copy the exact Image API URL of the current view    |
+| `M`            | Hand the canvas+region off to Mirador               |
+| `a`            | Create an anchored note for the current view        |
+| `g` / `q`      | Reload / quit                                        |
+
+Each navigation cancels the previous view's in-flight fetches, shows
+the cached image (or a rescaled proxy) immediately, then fetches the
+sharp version through the scheduler and prefetches the neighbouring
+regions. Fetched bytes are cached on disk, so revisiting a region
+costs no network. On a HiDPI display the viewer requests physical
+pixels and shows them at `1/factor` for crispness. On a level-0
+image server it only ever requests advertised sizes, so no URL 404s.
+Off a graphic display it prints the Image API URL instead of failing.
+
+`RET` on a search hit or an annotation that carries a region opens
+the viewer straight at that region.
+
+## Anchors and Content State
+
+An **anchor** is `xiiif`'s canonical, serialisable description of one
+exact spot of a source:
+
+```elisp
+(:xiiif-anchor-version 1
+ :manifest "https://example.org/iiif/book1/manifest"
+ :canvas   "https://example.org/iiif/book1/canvas/p1"
+ :region   (100 150 400 300)      ; canvas pixels, omit for a whole canvas
+ :label    "Illuminated initial")
+```
+
+Being plain data, it round-trips through `prin1`/`read`, the note
+backends and the scripting surface. It bridges to **IIIF Content
+State 1.0**: `xiiif-content-state-url` encodes an anchor as a
+`?iiif-content=` token for a web viewer, and `xiiif-open-content-state`
+reads a pasted Content State URL, token or raw JSON back and jumps to
+it — the viewer when it names a region, the canvas detail otherwise.
+This is what lets `xiiif`, an external agent and a web viewer look at
+the same place.
+
+`xiiif-annot-create` (`n` in the canvas detail, `a` in the viewer)
+turns the current view into a note. It builds the context anchor,
+prompts for a title and body, and delegates to
+`xiiif-annot-backend-function`. The default Org backend appends an
+entry to `xiiif-annot-org-file` whose `:PROPERTIES:` drawer records
+the whole anchor (`:XIIIF_MANIFEST:`, `:XIIIF_CANVAS:`,
+`:XIIIF_REGION:`, `:XIIIF_CONTENT_STATE:`), followed by the manifest
+link, the region's Image API link and a Content State URL.
+`xiiif-annot-visit`, run on such an entry, reopens exactly that view.
+Personal backends (Denote, a Markdown vault, Obsidian) belong in your
+config; the package ships only the extension point and the Org
+backend.
+
+## Scripting
+
+`xiiif` exposes a small, prompt-free surface an external process — a
+research agent driving Emacs through `emacsclient --eval`, or a
+shell script — can use without any interactive UI. None of these
+read the minibuffer; failures are signalled (never a muted
+`user-error`), so `emacsclient -e` sees them.
+
+| Function                     | What it does                                    |
+| ---------------------------- | ----------------------------------------------- |
+| `xiiif-batch-open`           | Load and render a manifest, return a summary alist. |
+| `xiiif-batch-goto`           | Navigate to an anchor or a Content State token/URL. |
+| `xiiif-batch-current-view`   | The anchor of the current view, or nil.         |
+| `xiiif-batch-annotate`       | Store an anchored note with no prompts.         |
+
+```sh
+# Load a manifest and read back its summary
+emacsclient -e '(xiiif-batch-open "https://example.org/iiif/m")'
+
+# Jump to a spot, note it, and get the current anchor back
+emacsclient -e '(xiiif-batch-goto "https://mirador/?iiif-content=...")'
+emacsclient -e '(xiiif-batch-annotate (xiiif-batch-current-view) "Lettrine" "note")'
+```
+
+This is the pull direction only: the agent reads and writes the view
+state. There is no server or socket in `xiiif`; a real-time "follow
+mode" would live in user config.
+
+The synchronous helpers (`xiiif-api-fetch-json`, `xiiif-ocr-fetch-sync`,
+`xiiif-image-download`, `xiiif-image-fetch-info`) remain available for
+scripting; no interactive path calls them.
+
 ## Internal data model
 
 Internally, `xiiif` parses every resource into `cl-defstruct` types:
@@ -445,28 +562,57 @@ xiiif/
 | --------------- | ------------------------------------------------------------------- |
 | `xiiif`             | Autoloaded user commands; dispatches between manifest and collection; drives the bulk-download queue and refresh cancellation. |
 | `xiiif-errors`      | `define-error' symbols (`xiiif-error`, `xiiif-network-error`, `xiiif-http-error`, `xiiif-parse-error`) shared by every layer. |
-| `xiiif-api`         | Sync + async HTTP, JSON parse, cancellable handles, auth-source-aware request headers. |
+| `xiiif-api`         | Sync + async HTTP over a switchable url/plz backend, JSON parse, cancellable handles, auth-source-aware request headers. |
+| `xiiif-fetch`       | Request scheduler: concurrency cap, per-host politeness, Retry-After, dedup, priorities, grouped cancellation. |
 | `xiiif-core`        | `cl-defstruct' types, the tolerant v2/v3 parser, canvas memoisation and `xiiif-manifest-find-canvas' hash index. |
 | `xiiif-cache`       | `xiiif-cache-select' unified selector, recent URL ring, debounced safe persistence. |
-| `xiiif-image`       | `xiiif-image-url', `xiiif-image-download-async', `xiiif-image-fetch-info-async', the `info.json' parser. |
-| `xiiif-annotations` | Fetch + parse non-painting annotations; orchestrates inline + external pages via `xiiif-annotations-collect'. |
-| `xiiif-ocr`         | ALTO / hOCR / plain-text sidecar fetch + extraction. |
-| `xiiif-profiles`    | Per-host regexp-matched profiles: HTTP headers, Image API defaults, `auth-source' bearer lookup. |
+| `xiiif-http-cache`  | On-disk conditional (ETag/304) response cache with LRU eviction. |
+| `xiiif-image-cache` | On-disk image byte cache (LRU) backing the viewer. |
+| `xiiif-image`       | `xiiif-image-url', `xiiif-image-download-async', `xiiif-image-fetch-info-async', the `info.json' parser, `xiiif-image-closest-size'. |
+| `xiiif-region`      | `(x y w h)' regions parsed from Media Fragments and v2/v3 selectors. |
+| `xiiif-anchor`      | Canonical anchors and IIIF Content State 1.0 import/export. |
+| `xiiif-view`        | The step-by-step region viewer: state model, geometry, rendering, navigation. |
+| `xiiif-annotations` | Fetch + parse non-painting annotations; orchestrates inline + external pages and AnnotationCollection pagination. |
+| `xiiif-ocr`         | ALTO / hOCR / plain-text sidecar fetch + extraction; ALTO word boxes. |
+| `xiiif-profiles`    | Per-host regexp-matched profiles: HTTP headers, Image API defaults, politeness interval, `auth-source' bearer lookup. |
 | `xiiif-sources`     | Named IIIF endpoint registry with optional URL-encoded identifier substitution. |
-| `xiiif-ui`          | Eight derived modes; renders every xiiif buffer. |
+| `xiiif-ui`          | Derived modes; renders every xiiif buffer. |
 | `xiiif-org`         | `xiiif-org-insert-*' and `org-capture' helpers. |
+| `xiiif-annot`       | Anchored note creation with a pluggable backend (Org by default). |
+| `xiiif-batch`       | Prompt-free scripting surface for `emacsclient --eval'. |
 | `xiiif-cite`        | `xiiif-citation-metadata', `xiiif-citation-bibtex', `xiiif-citation-csl-json'. |
 
 ## Customization
 
 All options live under the `xiiif` group (`M-x customize-group RET xiiif`).
 
-### HTTP
+### HTTP and scheduling
 
-| Option                  | Default                                                  |
-| ----------------------- | -------------------------------------------------------- |
-| `xiiif-api-timeout`     | `30` seconds                                             |
-| `xiiif-api-user-agent`  | `xiiif.el/<version> Emacs/<version>`                     |
+| Option                          | Default                                          |
+| ------------------------------- | ------------------------------------------------ |
+| `xiiif-api-timeout`             | `30` seconds                                     |
+| `xiiif-api-user-agent`          | `xiiif.el/<version> Emacs/<version>`             |
+| `xiiif-api-backend`             | `auto` (use `plz` when installed, else `url`)    |
+| `xiiif-api-max-body-size`       | `50 MiB` (reject larger responses)               |
+| `xiiif-fetch-max-concurrent`    | `4` in-flight requests                           |
+| `xiiif-fetch-host-interval`     | `0.15` s between requests to a host              |
+| `xiiif-fetch-max-retries`       | `3` (429/503 with `Retry-After`)                 |
+| `xiiif-http-cache-max-entries`  | `512` cached responses                           |
+| `xiiif-image-cache-max-bytes`   | `200 MiB` of cached image bytes                  |
+| `xiiif-search-max-pages` / `xiiif-annotations-max-pages` | `20` paginated pages   |
+
+The `plz` backend is entirely optional and detected at runtime; with
+no extra packages `xiiif` uses Emacs's built-in `url` library.
+
+### Viewer and notes
+
+| Option                         | Default                                           |
+| ------------------------------ | ------------------------------------------------- |
+| `xiiif-view-cache-size`        | `8` decoded region images per buffer              |
+| `xiiif-view-prefetch`          | `t` (prefetch neighbouring regions)               |
+| `xiiif-mirador-base-url`       | `https://projectmirador.org/embed/`               |
+| `xiiif-annot-org-file`         | `~/.emacs.d/xiiif/notes.org`                      |
+| `xiiif-annot-backend-function` | `xiiif-annot-org-store`                           |
 
 ### Languages
 
@@ -631,14 +777,17 @@ testing.)
 ## Roadmap
 
 See [`ROADMAP.md`](ROADMAP.md) for the short-, medium-, and
-long-term plan. Highlights of the next sprints:
+long-term plan. Highlights so far:
 
 - **0.2** — async fetch ✅, Collections ✅, `info.json` integration ✅,
   finer-grained HTTP error reporting ✅, structures/ranges navigation ✅,
-  inline thumbnail preview.
-- **0.3** — bulk derivative export, `org-capture` template, citation
-  export (BibTeX / CSL-JSON), annotation fetch, OCR/ALTO sidecars.
-- **0.4** — source registry ✅, hooks, per-server profiles.
+  inline thumbnail preview ✅.
+- **0.3** — bulk derivative export ✅, `org-capture` template ✅, citation
+  export (BibTeX / CSL-JSON) ✅, annotation fetch ✅, OCR/ALTO sidecars ✅,
+  HTTP cache ✅, v2→v3 upgrade ✅, IIIF Search ✅, Mirador handoff ✅.
+- **0.4** — network v2 (scheduler, plz backend, caches) ✅, region
+  viewer ✅, canonical anchors + Content State ✅, anchored notes ✅,
+  batch scripting surface ✅.
 
 ## Contributing
 

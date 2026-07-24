@@ -36,7 +36,7 @@
   :group 'xiiif)
 
 (defcustom xiiif-api-user-agent
-  (format "xiiif.el/0.3.0 Emacs/%s" emacs-version)
+  (format "xiiif.el/0.4.0 Emacs/%s" emacs-version)
   "User-Agent string used for IIIF HTTP requests."
   :type 'string
   :group 'xiiif)
