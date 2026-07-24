@@ -52,7 +52,7 @@
 - [x] Étape 10 — Viewer : rendu & navigation (B2)
 - [x] Étape 11 — Viewer : commandes & intégration (B3)
 - [x] Étape 12 — Notes ancrées, backend org (C3)
-- [ ] Étape 13 — Surface batch (D)
+- [x] Étape 13 — Surface batch (D)
 - [ ] Étape 14 — Housekeeping (E4, E5, E8)
 - [ ] Étape 15 — Pagination (E9) + option ALTO boxes (E10)
 - [ ] Étape 16 — Release 0.4.0 : docs, CHANGELOG, bump
