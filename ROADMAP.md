@@ -1,8 +1,9 @@
 # xiiif roadmap
 
-This roadmap reflects the state of `xiiif` at version `0.1.0`. Items
-closer to the top are more likely to land first; later items are
-deliberately speculative.
+This roadmap reflects the state of `xiiif` as of the 0.4 development
+cycle. Items closer to the top are more likely to land first; later
+items are deliberately speculative. Completed lines are marked
+*(shipped)*.
 
 ## 0.2 — fill in the obvious gaps
 
