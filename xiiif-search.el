@@ -269,8 +269,12 @@ Signals `user-error' when the manifest does not advertise one."
                        (user-error
                         "No IIIF manifest loaded; run `xiiif-open-manifest' first")))
          (service (or (xiiif-manifest-search-service manifest)
+                      ;; Without a service there is nothing to query
+                      ;; remotely, but the canvas may still carry an OCR
+                      ;; sidecar - saying so turns a dead end into a step.
                       (user-error
-                       "Current manifest does not declare a IIIF Search service"))))
+                       "Current manifest declares no IIIF Search service; \
+`xiiif-show-ocr' reads the OCR sidecar of one canvas"))))
     (when (string-blank-p query)
       (user-error "Empty query"))
     (message "xiiif: searching %s for %S..." service query)
@@ -278,6 +282,17 @@ Signals `user-error' when the manifest does not advertise one."
      service query
      (lambda (hits)
        (xiiif-search--render manifest query hits)))))
+
+;;;###autoload
+(defalias 'xiiif-search-ocr #'xiiif-search
+  "Search the current manifest's full text for QUERY.
+
+This is the name `SPEC_V1.md' §15 gives the search, and the two are
+the same command: a IIIF Search 1.0 service indexes the OCR the
+institution produced, so searching it *is* searching the OCR - and
+it is the only way to search a whole manifest without downloading
+every sidecar.  For the OCR of a single canvas, as text rather than
+as hits, see `xiiif-show-ocr'.")
 
 (provide 'xiiif-search)
 ;;; xiiif-search.el ends here

@@ -173,6 +173,19 @@ delegates to `xiiif-annot-backend-function'."
   (interactive)
   (xiiif-annot-create-for-anchor (xiiif-annot--context-anchor)))
 
+;;;###autoload
+(defun xiiif-create-annotation (&optional anchor title body)
+  "Create an anchored note, on ANCHOR when given, else on the context.
+
+TITLE and BODY are prompted for when omitted.  This is the name
+`SPEC_V1.md' §15 gives note creation; it takes its arguments so that
+one name serves both the interactive command and calling code, where
+`xiiif-annot-create' is the keymap-bound command and
+`xiiif-annot-create-for-anchor' the anchor-taking one."
+  (interactive)
+  (xiiif-annot-create-for-anchor (or anchor (xiiif-annot--context-anchor))
+                                 title body))
+
 
 ;;; ---------- visit ----------
 

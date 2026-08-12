@@ -170,8 +170,21 @@ All commands are autoloaded.
 | `xiiif-annot-create`        | Create an anchored note for the current view or canvas (`n`).    |
 | `xiiif-open-in-mirador`     | Open the current view (canvas+region) in an external Mirador.    |
 | `xiiif-open-content-state`  | Open a location from a IIIF Content State token or URL.          |
+| `xiiif-export-content-state`| Export the current location as a token, JSON, or viewer URL.     |
 | `xiiif-insert-org-link`     | Insert a manifest, canvas, image link, or metadata block.        |
 | `xiiif-export-citation`     | Export the manifest as BibTeX or CSL-JSON (insert or kill-ring). |
+
+### Stable names
+
+`SPEC_V1.md` §15 fixes the names third-party code should call. They
+are the ones that survive as the implementation moves underneath.
+
+| Stable name                 | Today                                                            |
+| --------------------------- | ---------------------------------------------------------------- |
+| `xiiif-open`                | Any IIIF reference — resource URL, Content State, or token.      |
+| `xiiif-search-ocr`          | Same command as `xiiif-search`; the Search service indexes OCR.  |
+| `xiiif-create-annotation`   | `xiiif-annot-create`, plus optional anchor/title/body arguments. |
+| `xiiif-open-external-viewer`| Dispatches to Mirador; other viewers plug in here.               |
 
 ### Auxiliary
 
