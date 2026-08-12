@@ -17,8 +17,10 @@ code Locus.
 
 Ces six items ne dépendent d'aucun autre dépôt et peuvent partir immédiatement :
 
-1. `xiiif-open` — dispatcher générique (manifest / collection / Content State / canvas). Seul
-   `xiiif-open-manifest` existe.
+1. ~~`xiiif-open` — dispatcher générique~~ — **fait**. La détection manifest / collection
+   existait déjà dans `xiiif-open-manifest` ; ce qui manquait était la reconnaissance du Canvas
+   isolé (`xiiif-resource-kind`) et le tri Content State / ressource avant le réseau
+   (`xiiif-open-target-kind`). `xiiif-open` n'était qu'un `defalias`.
 2. Alias d'API du `SPEC_V1.md` §15 : `xiiif-create-annotation` (→ `xiiif-annot-create`),
    `xiiif-export-content-state`, `xiiif-search-ocr`, `xiiif-open-external-viewer`.
 3. `xiiif-select-region` — sélection numérique de région au clavier (§23). Le modèle existe dans

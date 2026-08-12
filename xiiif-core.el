@@ -567,10 +567,23 @@ from the structures navigator) stay O(1)."
 
 ;;; ---------- resource detection ----------
 
+(defun xiiif-canvas-p-json (json)
+  "Return non-nil if JSON looks like a standalone IIIF Canvas.
+A Canvas reached on its own - rather than inside a Manifest - is a
+legitimate IIIF entry point, and `xiiif-open' has to recognise one
+before it can route to the canvas buffer."
+  (and (consp json)
+       (let ((type (xiiif--get json 'type)))
+         (or (equal type "Canvas")
+             (equal type "sc:Canvas")))))
+
 (defun xiiif-resource-kind (json)
-  "Return `manifest', `collection', or nil for JSON.
-Used by the dispatcher in `xiiif-open-manifest'."
+  "Return `manifest', `collection', `canvas', or nil for JSON.
+Used by the dispatcher in `xiiif-open'.  Canvas is tested first: a
+Canvas carries `items' too, and the Manifest fallback for v2 roots
+without a type would otherwise claim it."
   (cond
+   ((xiiif-canvas-p-json json)     'canvas)
    ((xiiif-collection-p-json json) 'collection)
    ((xiiif-manifest-p-json json)   'manifest)))
 

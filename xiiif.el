@@ -126,11 +126,12 @@ Falls back to `xiiif-current-canvas' when no buffer context applies."
   (or (xiiif--canvas-in-context)
       (user-error "No canvas selected; open one with `xiiif-open-canvas'")))
 
-(defun xiiif--load-resource-async (url on-manifest on-collection)
-  "Fetch URL asynchronously and dispatch to ON-MANIFEST or ON-COLLECTION.
-The right callback is chosen by `xiiif-resource-kind'.  If JSON is
-neither a Manifest nor a Collection, a message is shown and no
-callback is invoked.  Errors are reported via `message'.
+(defun xiiif--load-resource-async (url on-manifest on-collection &optional on-canvas)
+  "Fetch URL asynchronously and dispatch on what it turns out to be.
+The right callback is chosen by `xiiif-resource-kind'.  ON-CANVAS is
+optional: callers that only make sense for a Manifest or a Collection
+omit it, and a Canvas then reports as unsupported rather than being
+forced into the wrong buffer.  Errors are reported via `message'.
 Goes through the `xiiif-fetch' scheduler; returns a request object
 for `xiiif-fetch-cancel'."
   (message "xiiif: fetching %s..." url)
@@ -143,7 +144,11 @@ for `xiiif-fetch-cancel'."
                                  (xiiif-parse-manifest json url)))
            ('collection (funcall on-collection
                                  (xiiif-parse-collection json url)))
-           (_ (message "xiiif: %s is neither a Manifest nor a Collection"
+           ('canvas (if on-canvas
+                        (funcall on-canvas (xiiif-parse-canvas json))
+                      (message "xiiif: %s is a Canvas; this command needs a Manifest"
+                               url)))
+           (_ (message "xiiif: %s is not a Manifest, Collection or Canvas"
                        url)))
        (xiiif-parse-error
         (message "xiiif: could not parse %s (%s)"
@@ -172,10 +177,11 @@ previous request.")
   "Fetch the IIIF resource at URL asynchronously and show its primary buffer.
 
 Despite the name (kept for back-compat), this command auto-detects
-whether URL points at a Manifest or a Collection and dispatches to
-the appropriate buffer."
+whether URL points at a Manifest, a Collection or a standalone
+Canvas, and dispatches to the appropriate buffer.  `xiiif-open' is
+the wider entry point: it takes Content State tokens too."
   (interactive
-   (list (read-string "IIIF Manifest or Collection URL: "
+   (list (read-string "IIIF Manifest, Collection or Canvas URL: "
                       (car xiiif-recent-manifests))))
   (xiiif--load-resource-async
    url
@@ -195,11 +201,57 @@ the appropriate buffer."
      (let ((n (length (xiiif-collection-children collection))))
        (message "xiiif: loaded collection %s (%d item%s)"
                 (xiiif-collection-title collection)
-                n (if (= 1 n) "" "s"))))))
+                n (if (= 1 n) "" "s"))))
+   (lambda (canvas)
+     (xiiif-cache-set-canvas canvas)
+     (xiiif-ui-render-canvas canvas)
+     (message "xiiif: loaded canvas %s"
+              (or (xiiif-label-string (xiiif-canvas-label canvas)) "")))))
 
 ;;;###autoload
-(defalias 'xiiif-open #'xiiif-open-manifest
-  "Alias for `xiiif-open-manifest', whose name predates Collection support.")
+(defun xiiif-open-target-kind (target)
+  "Return `content-state' or `resource' for TARGET, or nil when neither.
+Classification is on the shape of the string, before any network
+call: a Content State is self-describing, so recognising it costs
+nothing, while telling a Manifest URL from a Canvas URL is not
+possible without fetching - `xiiif--load-resource-async' settles
+that half once the JSON is in hand."
+  (when (stringp target)
+    (let ((trimmed (string-trim target)))
+      (cond
+       ((string-blank-p trimmed) nil)
+       ;; Raw Content State JSON, or a viewer URL carrying one.
+       ((string-prefix-p "{" trimmed) 'content-state)
+       ((string-match-p "[?&]iiif-content=" trimmed) 'content-state)
+       ((xiiif-url-allowed-p trimmed) 'resource)
+       ;; Anything left that is not a URL at all: try it as a bare
+       ;; base64url token rather than refusing outright.
+       ((not (string-match-p "\\`[a-zA-Z][a-zA-Z0-9+.-]*:" trimmed))
+        'content-state)))))
+
+;;;###autoload
+(defun xiiif-open (target)
+  "Open TARGET, whatever kind of IIIF reference it is.
+
+TARGET may be the URL of a Manifest, a Collection or a Canvas, a
+IIIF Content State token, a viewer URL carrying `iiif-content=', or
+raw Content State JSON.  This is the single entry point of
+`SPEC_V1.md' §15; the narrower commands remain available when the
+kind is already known."
+  (interactive
+   (list (read-string "IIIF URL, Content State or token: "
+                      (car xiiif-recent-manifests))))
+  (pcase (xiiif-open-target-kind target)
+    ('content-state (xiiif-open-content-state target))
+    ('resource      (xiiif-open-manifest target))
+    ;; Only a string carrying a scheme reaches here, so the URL policy
+    ;; has a reason and it is the actionable half of the message.
+    (_ (let ((trimmed (and (stringp target) (string-trim target))))
+         (if (and trimmed (not (string-blank-p trimmed)))
+             (user-error "Cannot open %s: %s" trimmed
+                         (xiiif-url-refusal-message
+                          (xiiif-url-refusal trimmed)))
+           (user-error "Nothing to open"))))))
 
 ;;;###autoload
 (defun xiiif-open-source ()
