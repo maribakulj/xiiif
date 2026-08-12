@@ -37,6 +37,7 @@
 (require 'xiiif-image)
 (require 'xiiif-fetch)
 (require 'xiiif-anchor)
+(require 'xiiif-osd)
 
 ;; Defined in xiiif.el; referenced lazily for the Mirador handoff.
 (defvar xiiif-mirador-base-url)
@@ -486,6 +487,7 @@ rescaled stand-in during zoom."
     (define-key map (kbd "y") #'xiiif-view-copy-url)
     (define-key map (kbd "r") #'xiiif-view-select-region)
     (define-key map (kbd "M") #'xiiif-view-open-in-mirador)
+    (define-key map (kbd "O") #'xiiif-view-open-in-openseadragon)
     (define-key map (kbd "a") #'xiiif-view-annotate)
     (define-key map (kbd "g") #'xiiif-view-refresh)
     (define-key map (kbd "q") #'quit-window)
@@ -614,6 +616,18 @@ where the view is; this is that way."
               (xiiif-view-state-to-anchor xiiif-view--state))))
     (browse-url url)
     (message "xiiif: opening region in Mirador")))
+
+(defun xiiif-view-open-in-openseadragon ()
+  "Open the current view's canvas and region in OpenSeadragon.
+The region on screen survives the handoff, so the browser opens
+framed on exactly what Emacs was showing."
+  (interactive)
+  (unless xiiif-view--service
+    (user-error "This view has no Image API service"))
+  (xiiif-osd-open xiiif-view--service
+                  (xiiif-view-state-region xiiif-view--state)
+                  (xiiif-view-state-canvas-id xiiif-view--state))
+  (message "xiiif: opening region in OpenSeadragon"))
 
 (defvar xiiif-view-annotate-function nil
   "Function called by `xiiif-view-annotate' with the current anchor.

@@ -55,6 +55,7 @@
 (require 'xiiif-core)
 (require 'xiiif-region)
 (require 'xiiif-anchor)
+(require 'xiiif-osd)
 (require 'xiiif-view)
 (require 'xiiif-cache)
 (require 'xiiif-image)
@@ -742,18 +743,74 @@ when no manifest is loaded."
              (or (xiiif-anchor-label anchor) "manifest"))))
 
 ;;;###autoload
+(defun xiiif-open-in-openseadragon (&optional canvas region)
+  "Open CANVAS in OpenSeadragon, framed on REGION when given.
+
+CANVAS defaults to the contextual one.  OpenSeadragon views a single
+image, so this needs a canvas with an Image API service; for a whole
+work, `xiiif-open-in-mirador' is the handoff.  Writes a small local
+page and opens it with `browse-url' - see `xiiif-osd' for why the
+Mirador-style URL handoff is not available here."
+  (interactive)
+  (let* ((canvas (or canvas (xiiif--require-canvas)))
+         (service (xiiif-canvas-image-service canvas)))
+    (unless service
+      (user-error "Canvas has no Image API service; \
+`xiiif-open-in-mirador' hands off the manifest instead"))
+    (xiiif-osd-open service region (xiiif-canvas-title canvas))
+    (message "xiiif: opening %s in OpenSeadragon"
+             (xiiif-canvas-title canvas))))
+
+(defcustom xiiif-default-external-viewer 'auto
+  "Viewer used by `xiiif-open-external-viewer' when none is named.
+`auto' follows Spec §8 and picks by capability: OpenSeadragon when a
+canvas with an Image API service is in context - deep zoom on one
+image is what it is for - and Mirador otherwise, since a whole work
+is what it is for.  The chosen viewer is always named in the echo
+area, so `auto' is never silent about what it did."
+  :type '(choice (const :tag "Detect from context" auto)
+                 (const :tag "Always Mirador" mirador)
+                 (const :tag "Always OpenSeadragon" openseadragon))
+  :group 'xiiif)
+
+(defun xiiif--external-viewer-for-context (anchor)
+  "Return the viewer `auto' selects for ANCHOR or the current context.
+An explicit ANCHOR is a manifest+canvas+region location, which is
+Mirador's currency; without one, a canvas that can be zoomed wins."
+  (let ((canvas (and (null anchor) (xiiif--canvas-in-context))))
+    (if (and canvas (xiiif-canvas-image-service canvas))
+        'openseadragon
+      'mirador)))
+
+;;;###autoload
 (defun xiiif-open-external-viewer (&optional viewer anchor)
   "Hand the current xiiif location off to an external IIIF VIEWER.
 
-VIEWER is a symbol; `mirador' is the only one wired today and the
-default.  ANCHOR forces an exact handoff; with none, one is built
-from context.  This is the name `SPEC_V1.md' §15 gives the handoff,
-and the one to call from third-party code: the viewer-specific
-commands stay available, but only this one keeps working as viewers
-are added."
+VIEWER is `mirador', `openseadragon', or nil to follow
+`xiiif-default-external-viewer'.  ANCHOR forces an exact handoff;
+with none, one is built from context.  This is the name
+`SPEC_V1.md' §15 gives the handoff, and the one to call from
+third-party code: the viewer-specific commands stay available, but
+only this one keeps working as viewers are added."
   (interactive)
-  (pcase (or viewer 'mirador)
+  (pcase (or viewer
+             (if (eq xiiif-default-external-viewer 'auto)
+                 (xiiif--external-viewer-for-context anchor)
+               xiiif-default-external-viewer))
     ('mirador (xiiif-open-in-mirador anchor))
+    ('openseadragon
+     (if anchor
+         ;; OpenSeadragon addresses an image, not a location, so an
+         ;; anchor has to be resolved to the canvas it points at.
+         (let ((canvas (and xiiif-current-manifest
+                            (xiiif-manifest-find-canvas
+                             xiiif-current-manifest
+                             (xiiif-anchor-canvas anchor)))))
+           (unless canvas
+             (user-error "Anchor's canvas is not in the current manifest; \
+`mirador' takes an anchor directly"))
+           (xiiif-open-in-openseadragon canvas (xiiif-anchor-region anchor)))
+       (xiiif-open-in-openseadragon)))
     (other (user-error "Unknown external viewer: %s" other))))
 
 (defun xiiif--open-anchor (anchor)

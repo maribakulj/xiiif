@@ -15,7 +15,9 @@ code Locus.
 
 ## Priorité : ce qui est déverrouillé aujourd'hui
 
-Ces six items ne dépendent d'aucun autre dépôt et peuvent partir immédiatement :
+**Les six sont faits.** Ce qui reste dans ce dépôt est bloqué sur `locusolus/packages/protocol`
+(section suivante), à une exception près, notée en fin de liste : réinspecter chaque saut d'une
+redirection (§13).
 
 1. ~~`xiiif-open` — dispatcher générique~~ — **fait**. La détection manifest / collection
    existait déjà dans `xiiif-open-manifest` ; ce qui manquait était la reconnaissance du Canvas
@@ -41,7 +43,12 @@ Ces six items ne dépendent d'aucun autre dépôt et peuvent partir immédiateme
    La profondeur est vérifiée **après** parsing et par un parcours itératif : le risque n'est
    pas le parseur (les deux lecteurs refusent déjà l'absurde) mais les walkers récursifs en
    aval, et une vérification récursive serait elle-même la vulnérabilité.
-6. Bridge **OpenSeadragon**, symétrique de Mirador. Zéro occurrence dans le code actuel.
+6. ~~Bridge **OpenSeadragon**~~ — **fait** (`xiiif-osd.el`), et **pas** symétrique de Mirador :
+   Mirador est une application hébergée qui parle Content State, donc le handoff est une URL ;
+   OpenSeadragon est une bibliothèque JS, sans instance canonique, sans notion de Manifest ni de
+   Canvas, et qui consomme un `info.json`. Le handoff écrit donc une page locale. Conséquence :
+   il vise **un canvas**, jamais un manifest. `xiiif-default-external-viewer` vaut `auto` et
+   choisit par capacité (§8).
 
 XXE : sans objet par construction — `xiiif-ocr.el` scanne le XML par regexp sans
 `libxml-parse-xml-region`, donc aucune résolution d'entité. Ne « corrige » pas ce qui n'est pas

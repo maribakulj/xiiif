@@ -267,3 +267,67 @@ réinspecter chaque saut d'une redirection.
 
 **Prochain item.** §W10 : bridge OpenSeadragon, dernier item déverrouillé du dépôt. W0.5 reste
 conditionné à l'approbation d'ADR 0011 (PR #6 `locusolus`).
+
+## 2026-08-12 — W10.6 — bridge OpenSeadragon
+
+Dernier des six items §W10. Toujours en repli : ADR 0011 (PR #6 `locusolus`) attend l'arbitrage.
+
+**Périmètre.** `xiiif-osd.el` (neuf), `xiiif.el` (`xiiif-open-in-openseadragon`,
+`xiiif-default-external-viewer`, le dispatcher gagne sa seconde branche), `xiiif-view.el`
+(`xiiif-view-open-in-openseadragon`, touche `O`), `tests/xiiif-osd-test.el` (neuf), `README.md`,
+`CLAUDE.md` et ce fichier.
+
+**Tests exécutés.** Test de sortie : la page générée ouvre le bon `info.json`, cadrée sur la
+région courante, et une URL de service hostile n'y écrit pas de balise. `make test` → 473 tests,
+468 conformes, 0 inattendu, 5 sautés. `make compile-strict` → 0. Dix-sept tests neufs.
+
+**Décisions prises.** L'item disait « symétrique de Mirador ». Il ne peut pas l'être, et
+c'est le constat qui a décidé de tout le reste. Mirador est une application hébergée qui parle
+Content State : lui passer une localisation est une URL. OpenSeadragon est une **bibliothèque
+JavaScript** — pas d'instance canonique où envoyer qui que ce soit, aucune notion de Manifest ni
+de Canvas, et ce qu'il consomme est un `info.json` d'Image API. Un handoff par URL n'existe pas ;
+prétendre le contraire aurait produit une commande qui ne marche jamais.
+
+Le module écrit donc une petite page autonome dans un fichier temporaire et l'ouvre. Deux
+conséquences assumées : le handoff vise **un canvas**, jamais un manifest — c'est ce
+qu'OpenSeadragon fait bien, et Mirador reste le handoff d'une œuvre entière ; et la page charge
+la bibliothèque depuis `xiiif-osd-library-url`, un CDN par défaut, qui est un point de
+configuration précisément pour qu'une machine hors ligne ou soucieuse de sa vie privée le pointe
+vers une copie locale.
+
+La région survit au handoff, et l'arithmétique se fait dans le navigateur — il connaît déjà les
+dimensions de l'image, les calculer ici coûterait un `info.json`.
+
+**Sur l'échappement**, qui est le vrai point dur : ce module introduit une frontière HTML/JS
+qu'aucun autre n'a. Échapper pour JSON ne suffit pas, parce qu'un parseur HTML lit l'élément
+`script` avant JavaScript : `</script>` le termine depuis l'intérieur d'une chaîne, et un
+`<!--<script` antérieur bascule le tokeniseur dans un état où le `</script>` suivant ne le
+termine plus. Plutôt qu'énumérer ces cas, **aucun `<` ne survit littéralement** — `<` est
+ce que JavaScript y lit, et c'est du JSON ordinaire.
+
+Deux bugs de ma part attrapés ici, tous deux par le test de round-trip et non par les tests de
+motif : la chaîne de remplacement passée à `replace-regexp-in-string` avec LITERAL non nil est
+insérée telle quelle, donc `"\\\\/"` ajoutait une contre-oblique de trop dans l'URL. Le test qui
+relit la valeur échappée et la compare à l'originale attrape un caractère ajouté aussi bien
+qu'un caractère perdu ; un test qui cherche un motif interdit n'attrape que le second. Et le
+comptage des **deux** moitiés — `</script>` *et* `<script` — est ce qui a rendu la seconde porte
+visible : compter seulement `</script>` passait au vert pendant que `<script` passait toujours.
+
+L'URL du service est validée par la politique d'URL **avant** l'écriture du fichier (§13 :
+« external viewer ouvre des URLs validées »), même si c'est le navigateur qui va chercher.
+
+Enfin, le registre de visionneuses annoncé en W10.2 arrive maintenant qu'il y a deux clients, et
+sous la forme que §8 demande : `xiiif-default-external-viewer` vaut `auto` et choisit **par
+capacité** — OpenSeadragon quand un canvas zoomable est dans le contexte, Mirador sinon, et
+Mirador dès qu'une ancre explicite est donnée puisqu'une ancre est une localisation, sa monnaie.
+Le viseur choisi est toujours nommé dans l'écho : `auto` n'est jamais silencieux.
+
+**Écart avec la spec.** §8 liste un troisième client, « une URL Locus Solus si l'artefact
+appartient à une campagne » : bloqué sur `locusolus/packages/protocol`, comme le reste de
+l'intégration Locus. Il prendra une troisième branche du même `pcase`.
+
+**Prochain item.** Les six items §W10 sont faits. Ce qui reste dans ce dépôt est bloqué sur
+`locusolus/packages/protocol` — `RemoteArtifactRef`, `xiiif-open-locus-artifact`, l'affichage
+§19, la revue humaine §20 — à une exception près : réinspecter chaque saut d'une redirection
+(§13), nommé comme dû depuis W10.4. Côté `locusolus`, W0.5 attend toujours l'approbation
+d'ADR 0011 (PR #6), qui débloque aussi #7 et #8.

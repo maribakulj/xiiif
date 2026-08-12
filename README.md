@@ -170,6 +170,7 @@ All commands are autoloaded.
 | `xiiif-select-region`       | Focus a region typed as `X,Y,W,H` — no pointer needed (`r`).    |
 | `xiiif-annot-create`        | Create an anchored note for the current view or canvas (`n`).    |
 | `xiiif-open-in-mirador`     | Open the current view (canvas+region) in an external Mirador.    |
+| `xiiif-open-in-openseadragon` | Deep-zoom one canvas in OpenSeadragon, framed on the region.   |
 | `xiiif-open-content-state`  | Open a location from a IIIF Content State token or URL.          |
 | `xiiif-export-content-state`| Export the current location as a token, JSON, or viewer URL.     |
 | `xiiif-insert-org-link`     | Insert a manifest, canvas, image link, or metadata block.        |
@@ -185,7 +186,7 @@ are the ones that survive as the implementation moves underneath.
 | `xiiif-open`                | Any IIIF reference — resource URL, Content State, or token.      |
 | `xiiif-search-ocr`          | Same command as `xiiif-search`; the Search service indexes OCR.  |
 | `xiiif-create-annotation`   | `xiiif-annot-create`, plus optional anchor/title/body arguments. |
-| `xiiif-open-external-viewer`| Dispatches to Mirador; other viewers plug in here.               |
+| `xiiif-open-external-viewer`| Mirador or OpenSeadragon, chosen by capability (Spec §8).        |
 | `xiiif-select-region`       | Numeric region selection, in the viewer or opening it.           |
 
 ### Auxiliary
@@ -249,8 +250,8 @@ Common bindings:
 The region viewer (`*XIIIF View*`) has its own keys: arrows or
 `hjkl` pan (half a screen, `C-u` for a fine step), `+`/`-`/`0` zoom
 in / out / reset, `r` type a region numerically, `y` copy the exact
-view URL, `M` hand off to Mirador, `a` create an anchored note, `g`
-reload, `q` quit.
+view URL, `M` hand off to Mirador, `O` to OpenSeadragon, `a` create
+an anchored note, `g` reload, `q` quit.
 
 `i` does the right thing depending on the buffer: when the current
 buffer is writable (like an Org buffer you've switched to), the link
@@ -447,6 +448,7 @@ a zoom scale table from the advertised `sizes`/`tiles` (or a
 | `r`            | Type a region as `X,Y,W,H` (or `X,Y,W,H%`)          |
 | `y`            | Copy the exact Image API URL of the current view    |
 | `M`            | Hand the canvas+region off to Mirador               |
+| `O`            | Hand the same view off to OpenSeadragon             |
 | `a`            | Create an anchored note for the current view        |
 | `g` / `q`      | Reload / quit                                        |
 
@@ -595,6 +597,7 @@ xiiif/
 | `xiiif-image`       | `xiiif-image-url', `xiiif-image-download-async', `xiiif-image-fetch-info-async', the `info.json' parser, `xiiif-image-closest-size'. |
 | `xiiif-region`      | `(x y w h)' regions parsed from Media Fragments and v2/v3 selectors. |
 | `xiiif-anchor`      | Canonical anchors and IIIF Content State 1.0 import/export. |
+| `xiiif-osd`         | OpenSeadragon handoff: a generated local page, since OpenSeadragon is a library with no URL scheme to hand off to. |
 | `xiiif-view`        | The step-by-step region viewer: state model, geometry, rendering, navigation. |
 | `xiiif-annotations` | Fetch + parse non-painting annotations; orchestrates inline + external pages and AnnotationCollection pagination. |
 | `xiiif-ocr`         | ALTO / hOCR / plain-text sidecar fetch + extraction; ALTO word boxes. |
@@ -636,6 +639,8 @@ no extra packages `xiiif` uses Emacs's built-in `url` library.
 | `xiiif-view-cache-size`        | `8` decoded region images per buffer              |
 | `xiiif-view-prefetch`          | `t` (prefetch neighbouring regions)               |
 | `xiiif-mirador-base-url`       | `https://projectmirador.org/embed/`               |
+| `xiiif-default-external-viewer`| `auto` (OpenSeadragon for a zoomable canvas, else Mirador) |
+| `xiiif-osd-library-url`        | OpenSeadragon 4 on jsDelivr (point it at a local copy) |
 | `xiiif-annot-org-file`         | `~/.emacs.d/xiiif/notes.org`                      |
 | `xiiif-annot-backend-function` | `xiiif-annot-org-store`                           |
 
