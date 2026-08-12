@@ -38,6 +38,7 @@
 (require 'json)
 (require 'url-util)
 (require 'xiiif-errors)
+(require 'xiiif-json)
 (require 'xiiif-core)
 (require 'xiiif-region)
 
@@ -231,16 +232,9 @@ Signals `xiiif-parse-error' when it cannot be decoded."
               (error
                (signal 'xiiif-parse-error
                        (list string "invalid Content State token"))))))
-         (json (condition-case err
-                   (let ((json-object-type 'alist)
-                         (json-array-type 'vector)
-                         (json-key-type 'symbol)
-                         (json-false :json-false)
-                         (json-null nil))
-                     (json-read-from-string json-text))
-                 (error
-                  (signal 'xiiif-parse-error
-                          (list string (error-message-string err)))))))
+         ;; A pasted Content State is as untrusted as a fetched
+         ;; manifest, so it goes through the same bounded decoder.
+         (json (xiiif-json-parse json-text string)))
     (xiiif-content-state--anchor-from-json json)))
 
 (provide 'xiiif-anchor)
