@@ -75,6 +75,10 @@ Forces the plz backend and routes curl around any proxy."
                         (process-contact server :service)))
           (plz-curl-default-args
            (append plz-curl-default-args '("--noproxy" "*")))
+          ;; The server is on 127.0.0.1, which the URL policy refuses by
+          ;; default. Reaching a loopback host is exactly what this suite is
+          ;; for, so it says so rather than being exempted quietly.
+          (xiiif-url-allow-private-hosts t)
           (xiiif-api-backend 'plz))
      (ignore base)
      (unwind-protect

@@ -23,10 +23,13 @@ Ces six items ne dépendent d'aucun autre dépôt et peuvent partir immédiateme
    `xiiif-export-content-state`, `xiiif-search-ocr`, `xiiif-open-external-viewer`.
 3. `xiiif-select-region` — sélection numérique de région au clavier (§23). Le modèle existe dans
    `xiiif-region.el`, l'interaction dans `xiiif-view.el` ; la commande manque.
-4. **Politique d'URL** : schémas autorisés, hôtes internes refusés (`169.254.169.254` compris),
-   redirections bornées. Aucune politique n'existe aujourd'hui — grep sans résultat sur tout le
-   dépôt.
-5. **Limites de taille et de profondeur** sur les réponses. Absentes.
+4. ~~**Politique d'URL**~~ — **fait** (`xiiif-url.el`) : schémas autorisés, hôtes internes
+   refusés (`169.254.169.254` inconditionnellement), redirections bornées sur les deux
+   transports. Reste dû : réinspecter **chaque saut** d'une redirection, que les deux transports
+   suivent en interne sans exposer les cibles.
+5. **Limite de profondeur** sur les réponses. La limite de **taille** existe déjà depuis avant ce
+   chantier — `xiiif-api-max-body-size`, 50 Mo, avec l'erreur `xiiif-body-too-large` ; seule la
+   profondeur d'imbrication JSON manque.
 6. Bridge **OpenSeadragon**, symétrique de Mirador. Zéro occurrence dans le code actuel.
 
 XXE : sans objet par construction — `xiiif-ocr.el` scanne le XML par regexp sans

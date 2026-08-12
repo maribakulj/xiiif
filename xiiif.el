@@ -47,6 +47,7 @@
 (require 'subr-x)
 
 (require 'xiiif-errors)
+(require 'xiiif-url)
 (require 'xiiif-profiles)
 (require 'xiiif-http-cache)
 (require 'xiiif-api)

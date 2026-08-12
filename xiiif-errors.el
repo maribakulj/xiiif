@@ -22,6 +22,8 @@
 (define-error 'xiiif-parse-error   "xiiif JSON parse error" 'xiiif-error)
 (define-error 'xiiif-body-too-large
   "xiiif response body exceeds the configured size limit" 'xiiif-http-error)
+(define-error 'xiiif-url-refused
+  "xiiif refused this URL" 'xiiif-network-error)
 
 (provide 'xiiif-errors)
 ;;; xiiif-errors.el ends here
