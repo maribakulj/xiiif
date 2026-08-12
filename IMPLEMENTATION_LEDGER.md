@@ -81,3 +81,46 @@ Et l'item 4 est désormais fait.
 `xiiif-open` dispatcher, alias d'API §15, `xiiif-select-region`, limite de profondeur JSON,
 bridge OpenSeadragon. Le retour sur `locusolus` W0.5 dépend de l'approbation d'ADR 0011 (PR #6),
 qui débloque aussi la garde Rust (#7) et W0.4 (#8).
+
+## 2026-08-12 — W10.1 — `xiiif-open`, dispatcher générique
+
+Item pris en repli pour la même raison qu'à l'entrée précédente : `locusolus` W0.5 attend
+l'approbation d'ADR 0011.
+
+**Périmètre.** `xiiif-core.el` (`xiiif-canvas-p-json` neuf, `xiiif-resource-kind` élargi),
+`xiiif.el` (`xiiif--load-resource-async` prend un quatrième callback, `xiiif-open-manifest`
+route le Canvas, le `defalias` `xiiif-open` devient une commande, `xiiif-open-target-kind`
+neuf), `tests/xiiif-open-test.el` (neuf), `README.md` (le quick start passe par `xiiif-open`,
+la table ne le décrit plus comme un alias), `CLAUDE.md` et ce fichier.
+
+**Tests exécutés.** Test de sortie : `xiiif-open` accepte les quatre formes de cible du §15 et
+choisit la bonne destination. `make test` → 419 tests, 414 conformes, 0 inattendu, 5 sautés
+(plz et curl absents). `make compile-strict` → 0. Les douze tests neufs séparent les deux
+décisions : ce qui se tranche sur la forme, sans réseau (`xiiif-open-target-kind`), et ce qui se
+tranche sur le JSON reçu (`xiiif-resource-kind`).
+
+**Décisions prises.** Le dispatch se fait en deux temps, et c'est ce qui rend la commande
+testable hors réseau. Distinguer un Content State d'une URL de ressource est décidable sur la
+chaîne seule — le premier est auto-descriptif. Distinguer une URL de Manifest d'une URL de
+Canvas ne l'est pas : rien dans l'URL ne le dit, il faut le JSON. Donc premier temps hors
+réseau, second temps dans le callback existant.
+
+L'ordre de `xiiif-resource-kind` est significatif : le Canvas est testé **avant** le Manifest.
+Un Canvas porte `items` lui aussi, et le repli v2 pour une racine sans type l'aurait réclamé
+comme Manifest. Le test `canvas-wins-over-the-manifest-fallback` fixe cet ordre.
+
+Une URL que la politique refuse échoue **comme URL**. La tentation était de la repasser en
+token base64url après échec ; elle enterrerait la raison du refus derrière un « Content State
+illisible ». Le message nomme donc le réglage à basculer, comme en W10.4.
+
+Le quatrième callback de `xiiif--load-resource-async` est optionnel : les appelants qui n'ont de
+sens que pour un Manifest ne le passent pas, et un Canvas leur est signalé comme non supporté
+plutôt que forcé dans le mauvais tampon.
+
+**Écart avec la spec.** Aucun sur cet item. `SPEC_V1.md` §15 liste aussi
+`xiiif-open-external-viewer` et `xiiif-open-locus-artifact` : le premier est l'item §W10-2, le
+second reste bloqué sur `locusolus/packages/protocol`.
+
+**Prochain item.** §W10 : alias d'API §15, `xiiif-select-region`, limite de profondeur JSON,
+bridge OpenSeadragon — aucun n'a de dépendance. Le retour sur W0.5 reste conditionné à
+l'approbation d'ADR 0011 (PR #6 `locusolus`), qui débloque aussi #7 et #8.

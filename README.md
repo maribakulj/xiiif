@@ -122,7 +122,7 @@ git clone https://github.com/maribakulj/xiiif.git ~/src/xiiif
 ## Quick start
 
 ```
-M-x xiiif-open-manifest RET https://example.org/iiif/book1/manifest RET
+M-x xiiif-open RET https://example.org/iiif/book1/manifest RET
 ```
 
 A `*XIIIF Manifest*` buffer opens with the manifest's label, summary,
@@ -130,10 +130,12 @@ metadata pairs, and the canvas count. Press `RET` to jump to the
 canvas browser, `RET` on a canvas to drill in, and `y` to copy a
 ready-to-use Image API URL.
 
-If the URL points at a Collection, you land in `*XIIIF Collection*`
-instead — same `RET` to descend into the next level (manifest or
-sub-collection). The same command handles both because it
-auto-detects resource type.
+`xiiif-open` is the one command you need to remember. Give it a
+Manifest, a Collection or a Canvas URL, a Content State token, a
+viewer URL carrying `iiif-content=`, or raw Content State JSON — it
+works out which it is. A Collection lands you in `*XIIIF Collection*`,
+same `RET` to descend into the next level (manifest or
+sub-collection).
 
 `M-x xiiif-open-recent` re-opens any URL you have visited before
 (persisted across Emacs restarts).
@@ -151,8 +153,8 @@ All commands are autoloaded.
 
 | Command                     | What it does                                                     |
 | --------------------------- | ---------------------------------------------------------------- |
+| `xiiif-open`                | Any IIIF reference: resource URL, Content State token, or JSON.  |
 | `xiiif-open-manifest`       | Prompt for a URL, fetch asynchronously, dispatch by type.        |
-| `xiiif-open`                | Alias for `xiiif-open-manifest`.                                 |
 | `xiiif-open-source`         | Pick a registered IIIF source and open a manifest by identifier. |
 | `xiiif-browse-canvases`     | Open the canvas browser for the current manifest.                |
 | `xiiif-open-canvas`         | Open the canvas at point or the current canvas.                  |
