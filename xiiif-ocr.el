@@ -82,8 +82,7 @@ surfaced."
 (defun xiiif-ocr-fetch-sync (url)
   "Fetch URL synchronously and return the body as a decoded string.
 Signals the usual `xiiif-' errors on failure."
-  (unless (xiiif-api--valid-url-p url)
-    (signal 'xiiif-network-error (list url "invalid URL")))
+  (xiiif-url-check url)
   (let* ((url-request-extra-headers
           '(("Accept" . "application/xml, text/html, text/plain, */*")))
          (buffer (condition-case err

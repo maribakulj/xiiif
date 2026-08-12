@@ -26,6 +26,7 @@
 (require 'json)
 (require 'url)
 (require 'url-http)
+(require 'xiiif-url)
 (require 'xiiif-errors)
 (require 'xiiif-profiles)
 (require 'xiiif-http-cache)
@@ -77,6 +78,7 @@ handles (`xiiif-api-cancel' accepts either kind)."
 (declare-function plz-response-headers "plz")
 (declare-function plz-response-body "plz")
 (defvar plz-curl-program)
+(defvar plz-curl-default-args)
 
 (defvar xiiif-api--plz-warned nil
   "Non-nil once the plz-unavailable fallback warning has been shown.")
@@ -111,13 +113,37 @@ them, but plz's HTTP response parsing does not apply to them."
       'url
     (xiiif-api--backend)))
 
+(defun xiiif-api--curl-redirect-args ()
+  "Return `plz-curl-default-args' with the redirect bound applied.
+plz drives curl, which follows redirects itself; capping them is the
+only lever xiiif has over a chain it does not see hop by hop.  An
+existing --max-redirs is dropped together with its value: removing
+the flag alone would leave a bare number in the argument list, which
+curl would read as something else entirely."
+  (let ((args (if (boundp 'plz-curl-default-args) plz-curl-default-args nil))
+        (kept nil))
+    (while args
+      (if (string-prefix-p "--max-redirs" (car args))
+          ;; "--max-redirs N" spans two cells, "--max-redirs=N" only one.
+          (setq args (if (string-match-p "=" (car args)) (cdr args) (cddr args)))
+        (push (car args) kept)
+        (setq args (cdr args))))
+    (append (nreverse kept)
+            (list "--max-redirs" (number-to-string xiiif-url-max-redirections)))))
+
+(defmacro xiiif-api--with-redirect-limit (&rest body)
+  "Run BODY with both transports bounded by `xiiif-url-max-redirections'."
+  (declare (indent 0))
+  `(let ((url-max-redirections xiiif-url-max-redirections)
+         (plz-curl-default-args (xiiif-api--curl-redirect-args)))
+     ,@body))
+
 (defun xiiif-api--valid-url-p (url)
-  "Return non-nil if URL looks like a supported URL.
-Accepts http(s):// and file:// schemes.  file:// URLs are mostly
-useful for reading local IIIF fixtures during development; downloads
-through `url-copy-file' also honour them."
-  (and (stringp url)
-       (string-match-p "\\`\\(?:https?\\|file\\)://[^[:space:]]+\\'" url)))
+  "Return non-nil if the URL policy allows fetching URL.
+Delegates to `xiiif-url-allowed-p'; see `xiiif-url' for what is
+refused and why.  Kept as a predicate because several call sites
+report the refusal through an errback rather than a signal."
+  (xiiif-url-allowed-p url))
 
 (defun xiiif-api--status-code ()
   "Parse the HTTP status code from the current `url' response buffer.
@@ -292,11 +318,11 @@ Signals `xiiif-network-error' on transport failure,
 backend selected by `xiiif-api-backend'.
 
 For a non-blocking version, see `xiiif-api-fetch-json-async'."
-  (unless (xiiif-api--valid-url-p url)
-    (signal 'xiiif-network-error (list url "invalid URL")))
-  (if (eq (xiiif-api--backend-for url) 'plz)
-      (xiiif-api--plz-fetch-json url)
-    (xiiif-api--url-fetch-json url)))
+  (xiiif-url-check url)
+  (xiiif-api--with-redirect-limit
+    (if (eq (xiiif-api--backend-for url) 'plz)
+        (xiiif-api--plz-fetch-json url)
+      (xiiif-api--url-fetch-json url))))
 
 (defun xiiif-api--url-fetch-json (url)
   "url.el backend for `xiiif-api-fetch-json'."
@@ -374,7 +400,9 @@ To cancel an in-flight request, pass the returned handle to
   (let ((errback (or errback #'xiiif-api--default-errback)))
     (if (not (xiiif-api--valid-url-p url))
         (progn
-          (funcall errback (list 'xiiif-network-error url "invalid URL"))
+          (funcall errback
+                   (list 'xiiif-network-error url
+                         (xiiif-url-refusal-message (xiiif-url-refusal url))))
           nil)
       (if (eq (xiiif-api--backend-for url) 'plz)
           (xiiif-api--plz-fetch-json-async url callback errback)
@@ -450,7 +478,9 @@ of cancellable handle, or nil when the URL was invalid."
   (let ((errback (or errback #'xiiif-api--default-errback)))
     (if (not (xiiif-api--valid-url-p url))
         (progn
-          (funcall errback (list 'xiiif-network-error url "invalid URL"))
+          (funcall errback
+                   (list 'xiiif-network-error url
+                         (xiiif-url-refusal-message (xiiif-url-refusal url))))
           nil)
       (if (eq (xiiif-api--backend-for url) 'plz)
           (xiiif-api--plz-fetch-bytes-async url callback errback)
@@ -722,18 +752,18 @@ under the plz backend, which distinguishes HTTP failures).
 
 Kept for scripting; interactive commands should use
 `xiiif-api-download-file-async' to avoid blocking Emacs."
-  (unless (xiiif-api--valid-url-p url)
-    (signal 'xiiif-network-error (list url "invalid URL")))
-  (if (eq (xiiif-api--backend-for url) 'plz)
-      (xiiif-api--plz-download-file url destination)
-    (let ((url-request-extra-headers (xiiif-api--request-headers url)))
-      (condition-case err
-          (progn
-            (url-copy-file url destination t)
-            destination)
-        (error
-         (signal 'xiiif-network-error
-                 (list url (error-message-string err))))))))
+  (xiiif-url-check url)
+  (xiiif-api--with-redirect-limit
+    (if (eq (xiiif-api--backend-for url) 'plz)
+        (xiiif-api--plz-download-file url destination)
+      (let ((url-request-extra-headers (xiiif-api--request-headers url)))
+        (condition-case err
+            (progn
+              (url-copy-file url destination t)
+              destination)
+          (error
+           (signal 'xiiif-network-error
+                   (list url (error-message-string err)))))))))
 
 (defun xiiif-api-download-file-async (url destination callback &optional errback)
   "Download URL to DESTINATION asynchronously.
@@ -755,7 +785,9 @@ buffer."
       (make-directory dir t))
     (if (not (xiiif-api--valid-url-p url))
         (progn
-          (funcall errback (list 'xiiif-network-error url "invalid URL"))
+          (funcall errback
+                   (list 'xiiif-network-error url
+                         (xiiif-url-refusal-message (xiiif-url-refusal url))))
           nil)
       (if (eq (xiiif-api--backend-for url) 'plz)
           (xiiif-api--plz-download-file-async url dest callback errback)
