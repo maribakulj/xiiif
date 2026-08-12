@@ -306,6 +306,43 @@ falls back to the canvas detail buffer."
        (xiiif-canvas-id canvas) service)))))
 
 ;;;###autoload
+(defun xiiif-select-region (&optional spec canvas)
+  "Focus a region of CANVAS given numerically as X,Y,W,H or X,Y,W,H%.
+
+SPEC is prompted for when omitted; CANVAS defaults to the contextual
+one.  In the region viewer this moves the view; elsewhere it opens
+the viewer already focused there.
+
+Off a graphic display, or on a canvas with no Image API service, the
+region's Image API URL goes to the kill ring instead - a region you
+cannot see is still a region you can cite, and `SPEC_V1.md' §23 asks
+that the rendered image never be the only way to reach one."
+  (interactive)
+  (if (derived-mode-p 'xiiif-view-mode)
+      (call-interactively #'xiiif-view-select-region)
+    (let* ((canvas (or canvas (xiiif--require-canvas)))
+           (spec (or spec (read-string "Region X,Y,W,H[%]: ")))
+           (region (xiiif-region-from-string spec)))
+      (unless region
+        (user-error "Not a region: %s (expected X,Y,W,H or X,Y,W,H%%)" spec))
+      (unless (xiiif-region-valid-p region)
+        (user-error "Region %s has a non-positive or out-of-canvas extent"
+                    (xiiif-region-to-string region)))
+      (let ((service (xiiif-canvas-image-service canvas)))
+        (if (and service (display-graphic-p))
+            (xiiif-view-load-canvas
+             (and xiiif-current-manifest
+                  (xiiif-manifest-url xiiif-current-manifest))
+             (xiiif-canvas-id canvas) service region)
+          (let ((url (xiiif-image-url
+                      canvas :region (xiiif-region-to-image-api region))))
+            (unless url
+              (user-error "Canvas has no image service and no display"))
+            (kill-new url)
+            (message "xiiif: region %s copied as %s"
+                     (xiiif-region-to-string region) url)))))))
+
+;;;###autoload
 (defun xiiif-copy-image-url (&optional with-options)
   "Copy an IIIF Image API URL for the contextual canvas.
 

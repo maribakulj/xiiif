@@ -9,14 +9,13 @@
 ;; first test here is simply that they are all bound - it is what makes
 ;; §15 a contract rather than a wish list.
 ;;
-;; Two of the nine are deliberately absent and stay absent until their
+;; One of the nine is deliberately absent and stays absent until its
 ;; blocker clears:
 ;;
-;;   xiiif-select-region       - §W10 item 3, not started
 ;;   xiiif-open-locus-artifact - needs locusolus/packages/protocol
 ;;
-;; They are listed here rather than asserted on: a test that fails the
-;; day a feature lands is a bad alarm.
+;; It is listed here rather than asserted on: a test that fails the day
+;; a feature lands is a bad alarm.
 
 ;;; Code:
 
@@ -31,6 +30,7 @@
     xiiif-open-manifest
     xiiif-open-canvas
     xiiif-search-ocr
+    xiiif-select-region
     xiiif-export-content-state
     xiiif-create-annotation
     xiiif-open-external-viewer)

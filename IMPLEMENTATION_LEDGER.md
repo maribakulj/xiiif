@@ -173,3 +173,46 @@ fonctionnalité arrive est une mauvaise alarme.
 **Prochain item.** §W10 : `xiiif-select-region`, limite de profondeur JSON, bridge
 OpenSeadragon. Aucun n'a de dépendance ; `xiiif-select-region` est le plus proche de ce qui
 vient d'être touché. W0.5 reste conditionné à l'approbation d'ADR 0011.
+
+## 2026-08-12 — W10.3 — `xiiif-select-region`, sélection numérique au clavier
+
+Toujours en repli : ADR 0011 (PR #6 `locusolus`) attend l'arbitrage.
+
+**Périmètre.** `xiiif-region.el` (`xiiif-region-valid-p`), `xiiif-view.el`
+(`xiiif-view-select-region`, touche `r`), `xiiif.el` (`xiiif-select-region`),
+`tests/xiiif-select-region-test.el` (neuf), `README.md`, `CLAUDE.md` et ce fichier.
+
+**Tests exécutés.** Test de sortie : une région se saisit au clavier et se lit au clavier, sans
+pointeur et sans affichage graphique. `make test` → 444 tests, 439 conformes, 0 inattendu, 5
+sautés. `make compile-strict` → 0. Onze tests neufs.
+
+**Décisions prises.** §23 tient en deux phrases, et la seconde — « les previews graphiques ne
+doivent pas être la seule manière de connaître les coordonnées ou la cible » — a dicté deux
+choses qu'une lecture rapide aurait manquées.
+
+D'abord, **l'invite est pré-remplie avec la région affichée**. C'est le mécanisme entier de la
+seconde phrase : ouvrir l'invite est la façon de lire les coordonnées courantes, et les modifier
+est la façon de s'y déplacer. Une invite vide aurait satisfait « saisie numérique » sans
+satisfaire « connaître les coordonnées ».
+
+Ensuite, **hors affichage graphique la commande ne meurt pas** : elle copie l'URL Image API de
+la région dans le kill ring. Une région qu'on ne peut pas voir reste une région qu'on peut
+citer. La solution facile — refuser hors terminal graphique — aurait laissé §23 à moitié faite
+précisément dans le cas où elle compte le plus.
+
+Deux commandes plutôt qu'une, parce que les contextes n'ont pas le même défaut : dans la
+visionneuse la région courante existe et sert d'amorce, ailleurs il n'y en a pas.
+`xiiif-select-region` délègue à `xiiif-view-select-region` par `derived-mode-p`, et la touche
+`r` est liée à la seconde.
+
+`xiiif-region-valid-p` vit dans `xiiif-region.el` et pas dans la commande : c'est une propriété
+du modèle, pas de l'interaction. Elle refuse une extension nulle ou négative et une origine
+négative, et pour une région en pourcentage vérifie qu'elle reste dans le canvas — la seule
+borne haute vérifiable sans connaître les dimensions. Un test vérifie qu'une région refusée
+laisse la vue **exactement** où elle était.
+
+**Écart avec la spec.** Aucun sur cet item. §15 est désormais à huit noms sur neuf ; seul
+`xiiif-open-locus-artifact` manque, bloqué sur `locusolus/packages/protocol`.
+
+**Prochain item.** §W10 : limite de profondeur JSON, bridge OpenSeadragon. Sans dépendance
+l'un comme l'autre. W0.5 reste conditionné à l'approbation d'ADR 0011.

@@ -144,6 +144,22 @@ when STRING is not a region."
         (setf (xiiif-region-unit r) (if percent 'percent 'pixel))
         r))))
 
+(defun xiiif-region-valid-p (region)
+  "Return non-nil when REGION is a rectangle worth asking a server for.
+Width and height must be positive - a zero-width crop is not a view,
+it is a typo - and the origin cannot be negative.  A percent region
+must additionally stay inside the canvas, which is the one bound
+checkable without knowing the canvas dimensions."
+  (and (xiiif-region-p region)
+       (let ((x (xiiif-region-x region))
+             (y (xiiif-region-y region))
+             (w (xiiif-region-w region))
+             (h (xiiif-region-h region)))
+         (and (numberp x) (numberp y) (numberp w) (numberp h)
+              (>= x 0) (>= y 0) (> w 0) (> h 0)
+              (or (not (eq (xiiif-region-unit region) 'percent))
+                  (and (<= (+ x w) 100) (<= (+ y h) 100)))))))
+
 (defun xiiif-region-to-fragment (region)
   "Return REGION as a Media Fragments value, or nil.
 A pixel region becomes \"xywh=X,Y,W,H\"; a percent region becomes
