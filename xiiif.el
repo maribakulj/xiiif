@@ -704,6 +704,21 @@ when no manifest is loaded."
     (message "xiiif: opening %s in Mirador"
              (or (xiiif-anchor-label anchor) "manifest"))))
 
+;;;###autoload
+(defun xiiif-open-external-viewer (&optional viewer anchor)
+  "Hand the current xiiif location off to an external IIIF VIEWER.
+
+VIEWER is a symbol; `mirador' is the only one wired today and the
+default.  ANCHOR forces an exact handoff; with none, one is built
+from context.  This is the name `SPEC_V1.md' §15 gives the handoff,
+and the one to call from third-party code: the viewer-specific
+commands stay available, but only this one keeps working as viewers
+are added."
+  (interactive)
+  (pcase (or viewer 'mirador)
+    ('mirador (xiiif-open-in-mirador anchor))
+    (other (user-error "Unknown external viewer: %s" other))))
+
 (defun xiiif--open-anchor (anchor)
   "Navigate to the location described by ANCHOR.
 When ANCHOR carries a region and the display is graphic, the region
@@ -757,6 +772,35 @@ Loads the referenced manifest and jumps to the anchored canvas."
   (when (string-blank-p token)
     (user-error "Empty Content State token"))
   (xiiif--open-anchor (xiiif-content-state-parse token)))
+
+;;;###autoload
+(defun xiiif-export-content-state (&optional format anchor)
+  "Export the current xiiif location as a IIIF Content State.
+
+FORMAT is `token' (the base64url form, and the default), `json'
+\(the Annotation document itself) or `url' (a viewer URL carrying
+the token); interactively the user is prompted.  ANCHOR overrides
+the context.  Like `xiiif-export-citation': inserted at point when
+the buffer is writable, copied to the kill ring otherwise.
+
+The result round-trips through `xiiif-open' in all three forms."
+  (interactive
+   (list (intern (completing-read
+                  "Content State format: "
+                  '("token" "json" "url") nil t nil nil "token"))))
+  (let* ((anchor (or anchor (xiiif--context-anchor)))
+         (text (pcase (or format 'token)
+                 ('token (xiiif-content-state-encode anchor))
+                 ('json  (xiiif-content-state-json anchor))
+                 ('url   (xiiif-content-state-url anchor))
+                 (other (user-error "Unknown Content State format: %s" other)))))
+    (if buffer-read-only
+        (progn
+          (kill-new text)
+          (message "xiiif: Content State (%s) copied to kill ring"
+                   (or format 'token)))
+      (insert text)
+      (message "xiiif: Content State (%s) inserted" (or format 'token)))))
 
 ;;;###autoload
 (defun xiiif-export-citation (&optional format)

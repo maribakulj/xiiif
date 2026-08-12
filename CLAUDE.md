@@ -21,8 +21,12 @@ Ces six items ne dépendent d'aucun autre dépôt et peuvent partir immédiateme
    existait déjà dans `xiiif-open-manifest` ; ce qui manquait était la reconnaissance du Canvas
    isolé (`xiiif-resource-kind`) et le tri Content State / ressource avant le réseau
    (`xiiif-open-target-kind`). `xiiif-open` n'était qu'un `defalias`.
-2. Alias d'API du `SPEC_V1.md` §15 : `xiiif-create-annotation` (→ `xiiif-annot-create`),
-   `xiiif-export-content-state`, `xiiif-search-ocr`, `xiiif-open-external-viewer`.
+2. ~~Alias d'API du `SPEC_V1.md` §15~~ — **fait**. Un seul était un vrai alias
+   (`xiiif-search-ocr` → `xiiif-search`). `xiiif-create-annotation` et
+   `xiiif-open-external-viewer` sont des façades qui prennent des arguments que la commande
+   sous-jacente n'acceptait pas ; `xiiif-export-content-state` était une commande absente — les
+   briques existaient dans `xiiif-anchor.el`, rien ne les exposait à l'utilisateur.
+   Restent hors de §15 : `xiiif-select-region` (item 3) et `xiiif-open-locus-artifact` (bloqué).
 3. `xiiif-select-region` — sélection numérique de région au clavier (§23). Le modèle existe dans
    `xiiif-region.el`, l'interaction dans `xiiif-view.el` ; la commande manque.
 4. ~~**Politique d'URL**~~ — **fait** (`xiiif-url.el`) : schémas autorisés, hôtes internes

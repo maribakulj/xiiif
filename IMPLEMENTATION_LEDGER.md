@@ -124,3 +124,52 @@ second reste bloqué sur `locusolus/packages/protocol`.
 **Prochain item.** §W10 : alias d'API §15, `xiiif-select-region`, limite de profondeur JSON,
 bridge OpenSeadragon — aucun n'a de dépendance. Le retour sur W0.5 reste conditionné à
 l'approbation d'ADR 0011 (PR #6 `locusolus`), qui débloque aussi #7 et #8.
+
+## 2026-08-12 — W10.2 — l'API `SPEC_V1.md` §15
+
+Toujours en repli : ADR 0011 (PR #6 `locusolus`) attend l'arbitrage.
+
+**Périmètre.** `xiiif-search.el` (`xiiif-search-ocr`, et le message d'absence de service),
+`xiiif-annot.el` (`xiiif-create-annotation`), `xiiif.el` (`xiiif-export-content-state`,
+`xiiif-open-external-viewer`), `tests/xiiif-api-surface-test.el` (neuf), `README.md`,
+`CLAUDE.md` et ce fichier.
+
+**Tests exécutés.** Test de sortie : les sept noms de §15 livrables aujourd'hui sont liés et
+sont des commandes — c'est l'assertion qui fait de §15 un contrat plutôt qu'une liste de vœux.
+`make test` → 433 tests, 428 conformes, 0 inattendu, 5 sautés. `make compile-strict` → 0.
+Quatorze tests neufs.
+
+**Décisions prises.** L'item s'appelait « alias d'API » ; un seul des quatre en était un. Le
+constat vaut d'être écrit, parce qu'il change ce qu'il fallait livrer :
+
+- `xiiif-search-ocr` est un vrai alias de `xiiif-search`, posé par `defalias` avec sa propre
+  docstring. Un service IIIF Search 1.0 indexe l'OCR produit par l'institution : chercher dans
+  ce service **est** chercher dans l'OCR, et c'est le seul moyen de couvrir un manifest entier
+  sans télécharger chaque sidecar. Le test compare les objets fonction, pas les noms, pour
+  qu'une copie divergente échoue.
+- `xiiif-create-annotation` et `xiiif-open-external-viewer` sont des façades. Elles prennent des
+  arguments que la commande sous-jacente n'accepte pas — un ancre explicite, un titre, un corps,
+  un choix de visionneuse — pour qu'un seul nom serve l'appel interactif et l'appel programmé.
+  `xiiif-annot-create` et `xiiif-open-in-mirador` restent inchangés : ils sont liés dans des
+  keymaps.
+- `xiiif-export-content-state` était une commande absente, pas un renommage. `xiiif-anchor.el`
+  savait déjà produire les trois formes ; rien ne les exposait. La commande suit la convention
+  de `xiiif-export-citation` — insertion au point si le tampon est modifiable, kill ring sinon.
+
+Une seule commande de visionneuse existe aujourd'hui, donc `xiiif-open-external-viewer` fait un
+`pcase` à une branche plutôt qu'un registre `defcustom`. Le registre viendra avec le second
+client (bridge OpenSeadragon, item 6) — pas avant : à une entrée, ce n'est pas un choix.
+
+Enfin, le message d'erreur de `xiiif-search` quand le manifest ne déclare pas de service nomme
+désormais `xiiif-show-ocr`. Sans service il n'y a rien à interroger à distance, mais le canvas
+courant peut porter un sidecar : dire lequel transforme une impasse en étape suivante.
+
+**Écart avec la spec.** §15 liste neuf noms ; sept sont livrés. `xiiif-select-region` est
+l'item 3 de §W10, non commencé. `xiiif-open-locus-artifact` reste bloqué sur
+`locusolus/packages/protocol`. Les deux sont nommés en commentaire dans le fichier de tests,
+avec leur blocage — mais **pas** assertés absents : un test qui devient rouge le jour où la
+fonctionnalité arrive est une mauvaise alarme.
+
+**Prochain item.** §W10 : `xiiif-select-region`, limite de profondeur JSON, bridge
+OpenSeadragon. Aucun n'a de dépendance ; `xiiif-select-region` est le plus proche de ce qui
+vient d'être touché. W0.5 reste conditionné à l'approbation d'ADR 0011.
