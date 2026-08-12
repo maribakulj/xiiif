@@ -28,6 +28,7 @@
 (require 'url-http)
 (require 'xiiif-url)
 (require 'xiiif-errors)
+(require 'xiiif-json)
 (require 'xiiif-profiles)
 (require 'xiiif-http-cache)
 
@@ -166,27 +167,10 @@ Point must be at the beginning of the buffer.  Returns an integer or nil."
 
 (defun xiiif-api--parse-json (body url)
   "Parse BODY as JSON or signal `xiiif-parse-error' with URL context.
-Uses the native `json-parse-string' when the running Emacs provides
-it (much faster on large manifests), configured to produce the same
-shapes as the pure-Elisp reader: alists with symbol keys, vectors,
-`:json-false' for false and nil for null.  Falls back to
-`json-read-from-string' otherwise."
-  (condition-case err
-      (if (fboundp 'json-parse-string)
-          (json-parse-string body
-                             :object-type 'alist
-                             :array-type 'array
-                             :null-object nil
-                             :false-object :json-false)
-        (let ((json-object-type 'alist)
-              (json-array-type  'vector)
-              (json-key-type    'symbol)
-              (json-false       :json-false)
-              (json-null        nil))
-          (json-read-from-string body)))
-    (error
-     (signal 'xiiif-parse-error
-             (list url (error-message-string err))))))
+Thin wrapper over `xiiif-json-parse', which also bounds the nesting
+depth - `xiiif-api-max-body-size' caps how many bytes arrive, and
+the depth limit caps how deeply they nest."
+  (xiiif-json-parse body url))
 
 (defun xiiif-api--content-type ()
   "Return the Content-Type header value of the current response buffer, or nil."

@@ -35,9 +35,12 @@ Ces six items ne dépendent d'aucun autre dépôt et peuvent partir immédiateme
    refusés (`169.254.169.254` inconditionnellement), redirections bornées sur les deux
    transports. Reste dû : réinspecter **chaque saut** d'une redirection, que les deux transports
    suivent en interne sans exposer les cibles.
-5. **Limite de profondeur** sur les réponses. La limite de **taille** existe déjà depuis avant ce
-   chantier — `xiiif-api-max-body-size`, 50 Mo, avec l'erreur `xiiif-body-too-large` ; seule la
-   profondeur d'imbrication JSON manque.
+5. ~~**Limite de profondeur** sur les réponses~~ — **fait** (`xiiif-json.el`,
+   `xiiif-json-max-depth`, 100, erreur `xiiif-json-too-deep` dérivée de `xiiif-parse-error`).
+   La limite de **taille** existait déjà avant ce chantier — `xiiif-api-max-body-size`, 50 Mo.
+   La profondeur est vérifiée **après** parsing et par un parcours itératif : le risque n'est
+   pas le parseur (les deux lecteurs refusent déjà l'absurde) mais les walkers récursifs en
+   aval, et une vérification récursive serait elle-même la vulnérabilité.
 6. Bridge **OpenSeadragon**, symétrique de Mirador. Zéro occurrence dans le code actuel.
 
 XXE : sans objet par construction — `xiiif-ocr.el` scanne le XML par regexp sans

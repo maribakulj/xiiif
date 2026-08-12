@@ -216,3 +216,54 @@ laisse la vue **exactement** où elle était.
 
 **Prochain item.** §W10 : limite de profondeur JSON, bridge OpenSeadragon. Sans dépendance
 l'un comme l'autre. W0.5 reste conditionné à l'approbation d'ADR 0011.
+
+## 2026-08-12 — W10.5 — limite de profondeur JSON
+
+Toujours en repli : ADR 0011 (PR #6 `locusolus`) attend l'arbitrage.
+
+**Périmètre.** `xiiif-json.el` (neuf), `xiiif-errors.el` (une erreur), `xiiif-api.el`
+(`xiiif-api--parse-json` devient une façade), `xiiif-anchor.el` (le parse de Content State passe
+par le même décodeur), `tests/xiiif-json-test.el` (neuf), `README.md`, `CLAUDE.md` et ce
+fichier.
+
+**Tests exécutés.** Test de sortie : un document imbriqué au-delà de la limite est refusé
+avec `xiiif-json-too-deep`, sur les deux entrées — réponse HTTP et Content State collé.
+`make test` → 456 tests, 451 conformes, 0 inattendu, 5 sautés. `make compile-strict` → 0.
+Douze tests neufs.
+
+**Décisions prises.** La menace n'est pas celle qu'on croit, et c'est ce qui a décidé du
+placement. Les deux lecteurs JSON refusent déjà l'imbrication absurde — le natif par sa propre
+garde de profondeur, celui en Elisp par `max-lisp-eval-depth` — et les deux échecs arrivent
+comme `xiiif-parse-error`. Le vrai risque est un document qui **parse avec succès** à deux
+mille niveaux et fait ensuite exploser les walkers récursifs en aval : la conversion v2→v3, le
+lecteur de sélecteurs, les renderers. Chacun échouerait loin du fetch, avec une erreur qui ne
+nomme rien de tout cela.
+
+Donc la limite porte sur ce qui entre dans le modèle, pas sur ce que le parseur tolère —
+vérification **après** parsing — et elle est à nous plutôt qu'héritée de la borne que le
+Emacs courant a compilée.
+
+Le parcours est itératif, avec une pile explicite. Une vérification récursive sur une entrée
+hostile épuiserait exactement la pile qu'elle protège : la vérification deviendrait la
+vulnérabilité. C'est le test qui porte le plus : 5 000 niveaux parcourus intégralement sous une
+limite qui les autorise, puis refusés sous une limite qui ne les autorise pas.
+
+Un seul décodeur pour tout ce qui entre de l'extérieur. `xiiif-anchor.el` dupliquait les
+`json-object-type` et compagnie ; un Content State collé est aussi peu fiable qu'un manifest
+récupéré, et rien ne justifiait deux chemins. `xiiif-api--parse-json` reste comme façade — trois
+appelants et deux tests l'utilisent.
+
+`xiiif-json-too-deep` dérive de `xiiif-parse-error` : les gestionnaires existants continuent
+d'attraper. Un test le vérifie explicitement plutôt que de le supposer.
+
+La limite par défaut est 100, soit un ordre de grandeur au-dessus du réel — une Collection de
+Manifests de Canvases d'AnnotationPages tient sous dix. Un test vérifie que **tous** les
+fixtures d'exemple du dépôt passent à un quart de la limite. Une limite qui refuse du IIIF
+ordinaire se fait mettre à nil par le premier utilisateur qu'elle bloque, ce qui est pire que
+pas de limite : la marge fait partie de la garde.
+
+**Écart avec la spec.** Aucun sur cet item. Reste dû sur §13, et inchangé depuis W10.4 :
+réinspecter chaque saut d'une redirection.
+
+**Prochain item.** §W10 : bridge OpenSeadragon, dernier item déverrouillé du dépôt. W0.5 reste
+conditionné à l'approbation d'ADR 0011 (PR #6 `locusolus`).

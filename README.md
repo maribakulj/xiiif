@@ -584,7 +584,9 @@ xiiif/
 | --------------- | ------------------------------------------------------------------- |
 | `xiiif`             | Autoloaded user commands; dispatches between manifest and collection; drives the bulk-download queue and refresh cancellation. |
 | `xiiif-errors`      | `define-error' symbols (`xiiif-error`, `xiiif-network-error`, `xiiif-http-error`, `xiiif-parse-error`) shared by every layer. |
+| `xiiif-url`         | URL policy: allowed schemes, link-local and cloud-metadata refusals, private hosts behind an explicit opt-in. |
 | `xiiif-api`         | Sync + async HTTP over a switchable url/plz backend, JSON parse, cancellable handles, auth-source-aware request headers. |
+| `xiiif-json`        | The one decoder for JSON entering from outside: xiiif's shapes, and a nesting bound checked without recursion. |
 | `xiiif-fetch`       | Request scheduler: concurrency cap, per-host politeness, Retry-After, dedup, priorities, grouped cancellation. |
 | `xiiif-core`        | `cl-defstruct' types, the tolerant v2/v3 parser, canvas memoisation and `xiiif-manifest-find-canvas' hash index. |
 | `xiiif-cache`       | `xiiif-cache-select' unified selector, recent URL ring, debounced safe persistence. |
@@ -616,6 +618,7 @@ All options live under the `xiiif` group (`M-x customize-group RET xiiif`).
 | `xiiif-api-user-agent`          | `xiiif.el/<version> Emacs/<version>`             |
 | `xiiif-api-backend`             | `auto` (use `plz` when installed, else `url`)    |
 | `xiiif-api-max-body-size`       | `50 MiB` (reject larger responses)               |
+| `xiiif-json-max-depth`          | `100` nested containers (reject deeper JSON)     |
 | `xiiif-fetch-max-concurrent`    | `4` in-flight requests                           |
 | `xiiif-fetch-host-interval`     | `0.15` s between requests to a host              |
 | `xiiif-fetch-max-retries`       | `3` (429/503 with `Retry-After`)                 |
