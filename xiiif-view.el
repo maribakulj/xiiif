@@ -484,6 +484,7 @@ rescaled stand-in during zoom."
     (define-key map (kbd "-") #'xiiif-view-zoom-out)
     (define-key map (kbd "0") #'xiiif-view-zoom-reset)
     (define-key map (kbd "y") #'xiiif-view-copy-url)
+    (define-key map (kbd "r") #'xiiif-view-select-region)
     (define-key map (kbd "M") #'xiiif-view-open-in-mirador)
     (define-key map (kbd "a") #'xiiif-view-annotate)
     (define-key map (kbd "g") #'xiiif-view-refresh)
@@ -580,6 +581,31 @@ rescaled stand-in during zoom."
   (let ((url (xiiif-view--url xiiif-view--state)))
     (kill-new url)
     (message "Copied %s" url)))
+
+(defun xiiif-view-select-region (spec)
+  "Move the view to the region SPEC, given as X,Y,W,H or X,Y,W,H%.
+
+Interactively the prompt starts from the region on screen, so the
+current coordinates are readable - and editable - at the keyboard.
+Spec §23 asks that the rendered image never be the only way to know
+where the view is; this is that way."
+  (interactive
+   (list (read-string "Region X,Y,W,H[%]: "
+                      (xiiif-region-to-string
+                       (xiiif-view-state-region xiiif-view--state)))))
+  (let ((region (xiiif-region-from-string spec)))
+    (unless region
+      (user-error "Not a region: %s (expected X,Y,W,H or X,Y,W,H%%)" spec))
+    (unless (xiiif-region-valid-p region)
+      (user-error "Region %s has a non-positive or out-of-canvas extent"
+                  (xiiif-region-to-string region)))
+    (let ((win (xiiif-view--window-pixels)))
+      (xiiif-view--navigate
+       (xiiif-view--initial-state
+        (xiiif-view-state-manifest-url xiiif-view--state)
+        (xiiif-view-state-canvas-id xiiif-view--state)
+        xiiif-view--info region (car win) (cdr win))))
+    (message "xiiif: region %s" (xiiif-region-to-string region))))
 
 (defun xiiif-view-open-in-mirador ()
   "Open the current view's canvas+region in an external Mirador viewer."

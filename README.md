@@ -167,6 +167,7 @@ All commands are autoloaded.
 | `xiiif-show-ocr`            | Fetch and display an ALTO/hOCR/plain-text OCR sidecar.           |
 | `xiiif-search`              | Query the current manifest's IIIF Search 1.0 service.            |
 | `xiiif-view-canvas`         | Open the step-by-step region viewer on a canvas (`v`).           |
+| `xiiif-select-region`       | Focus a region typed as `X,Y,W,H` — no pointer needed (`r`).    |
 | `xiiif-annot-create`        | Create an anchored note for the current view or canvas (`n`).    |
 | `xiiif-open-in-mirador`     | Open the current view (canvas+region) in an external Mirador.    |
 | `xiiif-open-content-state`  | Open a location from a IIIF Content State token or URL.          |
@@ -185,6 +186,7 @@ are the ones that survive as the implementation moves underneath.
 | `xiiif-search-ocr`          | Same command as `xiiif-search`; the Search service indexes OCR.  |
 | `xiiif-create-annotation`   | `xiiif-annot-create`, plus optional anchor/title/body arguments. |
 | `xiiif-open-external-viewer`| Dispatches to Mirador; other viewers plug in here.               |
+| `xiiif-select-region`       | Numeric region selection, in the viewer or opening it.           |
 
 ### Auxiliary
 
@@ -246,8 +248,9 @@ Common bindings:
 
 The region viewer (`*XIIIF View*`) has its own keys: arrows or
 `hjkl` pan (half a screen, `C-u` for a fine step), `+`/`-`/`0` zoom
-in / out / reset, `y` copy the exact view URL, `M` hand off to
-Mirador, `a` create an anchored note, `g` reload, `q` quit.
+in / out / reset, `r` type a region numerically, `y` copy the exact
+view URL, `M` hand off to Mirador, `a` create an anchored note, `g`
+reload, `q` quit.
 
 `i` does the right thing depending on the buffer: when the current
 buffer is writable (like an Org buffer you've switched to), the link
@@ -441,10 +444,14 @@ a zoom scale table from the advertised `sizes`/`tiles` (or a
 | -------------- | --------------------------------------------------- |
 | arrows / `hjkl`| Pan by half a screen (`C-u` for a fine step)        |
 | `+` / `-` / `0`| Zoom in / out / reset to the whole canvas           |
+| `r`            | Type a region as `X,Y,W,H` (or `X,Y,W,H%`)          |
 | `y`            | Copy the exact Image API URL of the current view    |
 | `M`            | Hand the canvas+region off to Mirador               |
 | `a`            | Create an anchored note for the current view        |
 | `g` / `q`      | Reload / quit                                        |
+
+`r` prompts with the region currently on screen, so the coordinates
+are readable — and editable — without reading them off the picture.
 
 Each navigation cancels the previous view's in-flight fetches, shows
 the cached image (or a rescaled proxy) immediately, then fetches the

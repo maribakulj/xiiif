@@ -27,8 +27,10 @@ Ces six items ne dépendent d'aucun autre dépôt et peuvent partir immédiateme
    sous-jacente n'acceptait pas ; `xiiif-export-content-state` était une commande absente — les
    briques existaient dans `xiiif-anchor.el`, rien ne les exposait à l'utilisateur.
    Restent hors de §15 : `xiiif-select-region` (item 3) et `xiiif-open-locus-artifact` (bloqué).
-3. `xiiif-select-region` — sélection numérique de région au clavier (§23). Le modèle existe dans
-   `xiiif-region.el`, l'interaction dans `xiiif-view.el` ; la commande manque.
+3. ~~`xiiif-select-region`~~ — **fait**. Deux commandes : `xiiif-view-select-region` (`r` dans
+   la visionneuse, l'invite pré-remplie avec la région affichée) et `xiiif-select-region`, qui
+   ouvre la visionneuse déjà cadrée. Hors affichage graphique elle copie l'URL Image API de la
+   région : §23 demande que l'image rendue ne soit jamais le seul moyen d'atteindre une région.
 4. ~~**Politique d'URL**~~ — **fait** (`xiiif-url.el`) : schémas autorisés, hôtes internes
    refusés (`169.254.169.254` inconditionnellement), redirections bornées sur les deux
    transports. Reste dû : réinspecter **chaque saut** d'une redirection, que les deux transports
