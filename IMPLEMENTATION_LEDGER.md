@@ -331,3 +331,63 @@ l'intégration Locus. Il prendra une troisième branche du même `pcase`.
 §19, la revue humaine §20 — à une exception près : réinspecter chaque saut d'une redirection
 (§13), nommé comme dû depuis W10.4. Côté `locusolus`, W0.5 attend toujours l'approbation
 d'ADR 0011 (PR #6), qui débloque aussi #7 et #8.
+
+## 2026-08-13 — W10.4bis — réinspecter chaque saut d'une redirection
+
+Dette nommée dans l'entrée W10.4 comme « l'item de suite le plus évident de ce chantier », puis
+répétée dans W10.5 et W10.6 sans être prise. Elle ne dépendait de rien.
+
+**Périmètre.** `xiiif-api.el` (les deux transports, sync et async, JSON, octets et
+téléchargement), `tests/xiiif-redirect-test.el` (neuf), `tests/xiiif-url-test.el` (un test
+réécrit, un ajouté), `CLAUDE.md` et ce fichier.
+
+**Tests exécutés.** Test de sortie : une URL autorisée qui redirige vers un hôte refusé échoue
+avec `xiiif-url-refused`, et **la cible refusée n'est jamais requise** — c'est l'assertion qui
+sépare prévenir d'une SSRF de la constater. `make test` → 499 tests, 494 conformes, 0 inattendu,
+5 sautés. `make compile-strict` → 0. Vingt-cinq tests neufs dans `xiiif-redirect-test.el`, plus
+un dans `xiiif-url-test.el` — 473 → 499 au total.
+
+Écrits rouges d'abord : 16 échecs avant la moindre ligne d'implémentation. Puis vérification par
+mutation — en neutralisant le seul appel `xiiif-url-check` du saut, **8 tests passent au rouge**,
+répartis sur les deux transports, sync et async, JSON, octets et téléchargement. Une garde dont
+on n'a pas vu échouer les tests n'est pas une garde.
+
+**Décisions prises.** La seule façon d'inspecter un saut est de ne pas déléguer la marche. Les
+deux transports suivaient la chaîne en interne et ne rendaient que la dernière réponse ; ils sont
+désormais muselés — `--location` retiré des arguments curl, `url-max-redirections` à 0 — et xiiif
+suit lui-même, un saut vérifié à la fois.
+
+Trois conséquences qui ne sautaient pas aux yeux :
+
+1. **Un `Location` peut être relatif** (RFC 7231 §7.1.2). Une politique qui lirait le texte de
+   l'en-tête n'y verrait aucun hôte et laisserait passer `/latest/meta`. La résolution précède
+   donc la vérification, et un test couvre le cas où c'est la résolution qui produit l'hôte
+   interdit.
+2. **Les en-têtes se construisent pour l'hôte réellement contacté**, pas pour l'URL d'origine.
+   Un `Authorization` de profil appartient à l'hôte pour lequel il a été déclaré ; suivre la
+   chaîne soi-même est précisément ce qui permet de ne pas le tendre à celui vers qui elle
+   tourne. En revanche le résultat reste attribué à l'URL d'origine : c'est la clé de cache et
+   l'identité que le rappel d'erreur porte.
+3. **Le handle de cancellation change sous l'appelant.** Il reçoit maintenant une cellule
+   `xiiif-api-chain` qui pointe vers le saut en vol, et `xiiif-api-cancel` traverse. Le drapeau
+   `cancelled` arrête aussi la chaîne **entre** deux sauts, là où il n'y a aucun handle vivant à
+   tuer.
+
+Les téléchargements ne sont pas une porte dérobée. `url-copy-file` et le `--location` de curl
+suivaient les chaînes pour eux aussi : couper sans remplacer aurait cassé tout téléchargement
+redirigé pendant que les tests JSON restaient verts. Les deux chemins passent par le même
+pilote et sont testés ici.
+
+**Écart avec la spec.** Aucun, et §13 est désormais tenu en entier : entités XML sans objet,
+limites de taille et de profondeur, politique d'URL, redirections bornées **et inspectées**,
+credentials via `auth-source`, viewer externe sur URLs validées.
+
+Un test existant a changé de contrat plutôt que d'être supprimé :
+`xiiif-url/redirect-bound-reaches-curl-arguments` vérifiait que la borne parvenait à curl. Ce
+n'est plus la borne qu'on lui confie, c'est le refus de suivre — il est devenu
+`xiiif-url/curl-does-not-follow-redirects-itself`, avec un second test qui couvre les quatre
+orthographes (`-L`, `--location`, `--location-trusted`, `--max-redirs=N`).
+
+**Prochain item.** Ce dépôt n'a plus d'item déverrouillé. Tout ce qui reste — `RemoteArtifactRef`,
+`xiiif-open-locus-artifact`, l'affichage §19, la revue humaine §20 — attend
+`locusolus/packages/protocol`, donc l'approbation d'ADR 0011 (PR #6 `locusolus`).

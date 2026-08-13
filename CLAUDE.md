@@ -15,9 +15,9 @@ code Locus.
 
 ## Priorité : ce qui est déverrouillé aujourd'hui
 
-**Les six sont faits.** Ce qui reste dans ce dépôt est bloqué sur `locusolus/packages/protocol`
-(section suivante), à une exception près, notée en fin de liste : réinspecter chaque saut d'une
-redirection (§13).
+**Les six sont faits**, et la dette de §13 qu'ils traînaient — réinspecter chaque saut d'une
+redirection — est réglée aussi. Ce qui reste dans ce dépôt est bloqué sur
+`locusolus/packages/protocol` (section suivante).
 
 1. ~~`xiiif-open` — dispatcher générique~~ — **fait**. La détection manifest / collection
    existait déjà dans `xiiif-open-manifest` ; ce qui manquait était la reconnaissance du Canvas
@@ -35,8 +35,10 @@ redirection (§13).
    région : §23 demande que l'image rendue ne soit jamais le seul moyen d'atteindre une région.
 4. ~~**Politique d'URL**~~ — **fait** (`xiiif-url.el`) : schémas autorisés, hôtes internes
    refusés (`169.254.169.254` inconditionnellement), redirections bornées sur les deux
-   transports. Reste dû : réinspecter **chaque saut** d'une redirection, que les deux transports
-   suivent en interne sans exposer les cibles.
+   transports. ~~Reste dû : réinspecter **chaque saut**~~ — **fait aussi** : xiiif suit
+   lui-même la chaîne (`xiiif-api--checked-hop`), `--location` retiré de curl et
+   `url-max-redirections` à 0, chaque `Location` résolu puis soumis à la politique **avant**
+   la requête suivante.
 5. ~~**Limite de profondeur** sur les réponses~~ — **fait** (`xiiif-json.el`,
    `xiiif-json-max-depth`, 100, erreur `xiiif-json-too-deep` dérivée de `xiiif-parse-error`).
    La limite de **taille** existait déjà avant ce chantier — `xiiif-api-max-body-size`, 50 Mo.

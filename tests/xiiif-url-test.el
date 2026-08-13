@@ -126,15 +126,30 @@
   (let ((xiiif-url-allow-private-hosts t))
     (should (xiiif-api--valid-url-p "http://127.0.0.1/iiif/m"))))
 
-(ert-deftest xiiif-url/redirect-bound-reaches-curl-arguments ()
+(ert-deftest xiiif-url/curl-does-not-follow-redirects-itself ()
+  "The bound used to be handed to curl; now the following is.
+xiiif inspects each hop, so curl must stop at the 3xx and give it
+back — see `xiiif-api--checked-hop' and tests/xiiif-redirect-test.el."
   (require 'xiiif-api)
-  (let ((xiiif-url-max-redirections 2)
-        (plz-curl-default-args '("--silent" "--max-redirs" "99")))
+  (let ((plz-curl-default-args
+         '("--silent" "--location" "--max-redirs" "99" "--compressed")))
     (let ((args (xiiif-api--curl-redirect-args)))
+      ;; Unrelated arguments survive.
       (should (member "--silent" args))
-      ;; The old value must be gone, not merely followed by a new one.
+      (should (member "--compressed" args))
+      ;; Following is off, and the old value is gone rather than merely
+      ;; followed by a new one — a stray "99" would be read as a URL.
+      (should-not (member "--location" args))
       (should-not (member "99" args))
-      (should (equal '("--max-redirs" "2") (last args 2))))))
+      (should (equal '("--max-redirs" "0") (last args 2))))))
+
+(ert-deftest xiiif-url/curl-following-is-off-in-every-spelling ()
+  (require 'xiiif-api)
+  (dolist (spelling '(("-L") ("--location") ("--location-trusted")
+                      ("--max-redirs=99")))
+    (let* ((plz-curl-default-args (cons "--silent" spelling))
+           (args (xiiif-api--curl-redirect-args)))
+      (should (equal '("--silent" "--max-redirs" "0") args)))))
 
 (provide 'xiiif-url-test)
 ;;; xiiif-url-test.el ends here
