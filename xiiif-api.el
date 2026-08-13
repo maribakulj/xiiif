@@ -23,9 +23,12 @@
 
 ;;; Code:
 
+(require 'cl-lib)
+(require 'subr-x)
 (require 'json)
 (require 'url)
 (require 'url-http)
+(require 'url-expand)
 (require 'xiiif-url)
 (require 'xiiif-errors)
 (require 'xiiif-json)
@@ -115,29 +118,111 @@ them, but plz's HTTP response parsing does not apply to them."
     (xiiif-api--backend)))
 
 (defun xiiif-api--curl-redirect-args ()
-  "Return `plz-curl-default-args' with the redirect bound applied.
-plz drives curl, which follows redirects itself; capping them is the
-only lever xiiif has over a chain it does not see hop by hop.  An
-existing --max-redirs is dropped together with its value: removing
-the flag alone would leave a bare number in the argument list, which
-curl would read as something else entirely."
+  "Return `plz-curl-default-args' with curl's own redirect following off.
+
+plz's defaults include --location, which makes curl walk the whole
+chain inside one invocation and hand back only the last response -
+the hops xiiif has to inspect never surface.  Removing it gives the
+3xx back to `xiiif-api--checked-hop'.  --max-redirs 0 is appended as
+a second lock: it costs nothing when --location is absent, and if a
+user's own arguments restore --location it makes curl stop rather
+than quietly resume walking the chain unsupervised.
+
+An existing --max-redirs is dropped together with its value:
+removing the flag alone would leave a bare number in the argument
+list, which curl would read as something else entirely."
   (let ((args (if (boundp 'plz-curl-default-args) plz-curl-default-args nil))
         (kept nil))
     (while args
-      (if (string-prefix-p "--max-redirs" (car args))
-          ;; "--max-redirs N" spans two cells, "--max-redirs=N" only one.
-          (setq args (if (string-match-p "=" (car args)) (cdr args) (cddr args)))
+      (cond
+       ((string-prefix-p "--max-redirs" (car args))
+        ;; "--max-redirs N" spans two cells, "--max-redirs=N" only one.
+        (setq args (if (string-match-p "=" (car args)) (cdr args) (cddr args))))
+       ((member (car args) '("--location" "-L" "--location-trusted"))
+        (setq args (cdr args)))
+       (t
         (push (car args) kept)
-        (setq args (cdr args))))
-    (append (nreverse kept)
-            (list "--max-redirs" (number-to-string xiiif-url-max-redirections)))))
+        (setq args (cdr args)))))
+    (append (nreverse kept) (list "--max-redirs" "0"))))
 
 (defmacro xiiif-api--with-redirect-limit (&rest body)
-  "Run BODY with both transports bounded by `xiiif-url-max-redirections'."
+  "Run BODY with neither transport following redirects on its own.
+A transport that follows a chain internally decides where the next
+request goes; that decision belongs to `xiiif-api--checked-hop'."
   (declare (indent 0))
-  `(let ((url-max-redirections xiiif-url-max-redirections)
+  `(let ((url-max-redirections 0)
          (plz-curl-default-args (xiiif-api--curl-redirect-args)))
      ,@body))
+
+
+;;; ---------- redirections, one inspected hop at a time ----------
+;;
+;; The URL a fetch starts from is validated by `xiiif-url-check'.  A
+;; redirect chain is where that guarantee used to end: both transports
+;; followed it themselves, so a public URL that redirected to
+;; 169.254.169.254 was reached and xiiif never saw the turn.  Bounding
+;; the *number* of hops said nothing about their destinations.
+;;
+;; So xiiif follows the chain itself.  Each Location is resolved to an
+;; absolute URL and put through the same policy as the first, before
+;; the next request is issued - which is the whole difference between
+;; preventing an SSRF and noticing one afterwards.
+
+(defconst xiiif-api--redirect-statuses '(301 302 303 307 308)
+  "HTTP statuses treated as a redirect to inspect and follow.")
+
+(cl-defstruct (xiiif-api-chain (:constructor xiiif-api--chain)
+                               (:copier nil))
+  "An asynchronous request that may span several redirection hops.
+Following the chain ourselves means the transport handle changes
+under the caller, so what a caller receives is this cell and
+`xiiif-api-cancel' reaches through it to whichever hop is in flight.
+CANCELLED also stops the chain between hops, when no handle is live
+to cancel."
+  handle cancelled)
+
+(defun xiiif-api--redirect-target (location from)
+  "Return the absolute URL LOCATION points at, seen from FROM, or nil.
+A `Location' may be relative (RFC 7231 §7.1.2), and a policy reading
+the header text alone would find no host in \"/latest/meta\" and let
+it through."
+  (when (and (stringp location)
+             (not (string-blank-p location)))
+    (url-expand-file-name (string-trim location) from)))
+
+(defun xiiif-api--checked-hop (location from hop)
+  "Return the URL to fetch after FROM redirected to LOCATION at HOP.
+
+Signals `xiiif-url-refused' when the policy refuses the target, and
+`xiiif-network-error' when the chain is longer than
+`xiiif-url-max-redirections' or the redirect carries no usable
+`Location'.  Called before the next request goes out."
+  (when (> hop xiiif-url-max-redirections)
+    (signal 'xiiif-network-error
+            (list from (format "more than %d redirections"
+                               xiiif-url-max-redirections))))
+  (let ((target (xiiif-api--redirect-target location from)))
+    (unless target
+      (signal 'xiiif-network-error
+              (list from "redirect without a usable Location")))
+    (xiiif-url-check target)))
+
+(defun xiiif-api--url-response-redirect ()
+  "Return (LOCATION) when the current `url' buffer holds a redirect.
+Returns nil for any other response.  The one-element list keeps a
+3xx that carries no `Location' distinguishable from a 200, so it is
+reported as a broken redirect rather than parsed as a body."
+  (when (memq (xiiif-api--status-code) xiiif-api--redirect-statuses)
+    (list (xiiif-api--header-value "Location"))))
+
+(defun xiiif-api--plz-response-redirect (plz-err)
+  "Return (LOCATION) when PLZ-ERR carries a redirect response, else nil.
+With --location removed, curl hands a 3xx back as a plz error rather
+than following it."
+  (let* ((resp   (and (plz-error-p plz-err) (plz-error-response plz-err)))
+         (status (and resp (plz-response-status resp))))
+    (when (memq status xiiif-api--redirect-statuses)
+      (list (alist-get 'location (plz-response-headers resp))))))
 
 (defun xiiif-api--valid-url-p (url)
   "Return non-nil if the URL policy allows fetching URL.
@@ -308,23 +393,49 @@ For a non-blocking version, see `xiiif-api-fetch-json-async'."
         (xiiif-api--plz-fetch-json url)
       (xiiif-api--url-fetch-json url))))
 
+(defun xiiif-api--url-sync-chain (origin headers-fn accept final)
+  "Fetch ORIGIN with url.el, following checked hops, then call FINAL.
+
+HEADERS-FN builds `url-request-extra-headers' for the URL actually
+being contacted - not for ORIGIN.  That matters on a cross-host
+redirect: a profile's `Authorization' belongs to the host it was
+declared for, and following the chain ourselves is what makes it
+possible to not hand it to whoever the chain turns towards.
+
+ACCEPT overrides `url-mime-accept-string' when non-nil.  FINAL runs
+with the final response buffer current; its value is returned."
+  (let ((target origin) (hop 0) (result nil) (done nil))
+    (while (not done)
+      (let* ((url-request-extra-headers
+              (and headers-fn (funcall headers-fn target)))
+             (url-mime-accept-string (or accept url-mime-accept-string))
+             (buffer (condition-case err
+                         (url-retrieve-synchronously target t t xiiif-api-timeout)
+                       (error
+                        (signal 'xiiif-network-error
+                                (list target (error-message-string err)))))))
+        (unwind-protect
+            (progn
+              (unless (buffer-live-p buffer)
+                (signal 'xiiif-network-error (list target "no response")))
+              (with-current-buffer buffer
+                (let ((redirect (xiiif-api--url-response-redirect)))
+                  (if redirect
+                      (setq target (xiiif-api--checked-hop
+                                    (car redirect) target (cl-incf hop)))
+                    (setq result (funcall final)
+                          done t)))))
+          (when (buffer-live-p buffer) (kill-buffer buffer)))))
+    result))
+
 (defun xiiif-api--url-fetch-json (url)
-  "url.el backend for `xiiif-api-fetch-json'."
-  (let* ((url-request-extra-headers (xiiif-api--request-headers url))
-         (url-mime-accept-string
-          "application/ld+json, application/json")
-         (buffer (condition-case err
-                     (url-retrieve-synchronously url t t xiiif-api-timeout)
-                   (error
-                    (signal 'xiiif-network-error
-                            (list url (error-message-string err)))))))
-    (unwind-protect
-        (progn
-          (unless (buffer-live-p buffer)
-            (signal 'xiiif-network-error (list url "no response")))
-          (with-current-buffer buffer
-            (xiiif-api--response-json url)))
-      (when (buffer-live-p buffer) (kill-buffer buffer)))))
+  "url.el backend for `xiiif-api-fetch-json'.
+The parsed result is attributed to URL, not to the last hop: the
+cache key and the error identity are what the caller asked for."
+  (xiiif-api--url-sync-chain
+   url #'xiiif-api--request-headers
+   "application/ld+json, application/json"
+   (lambda () (xiiif-api--response-json url))))
 
 (defvar xiiif-api-last-error nil
   "The most recent asynchronous fetch error as a list (SYMBOL URL &rest DATA).
@@ -392,51 +503,78 @@ To cancel an in-flight request, pass the returned handle to
           (xiiif-api--plz-fetch-json-async url callback errback)
         (xiiif-api--url-fetch-json-async url callback errback)))))
 
+(defun xiiif-api--url-async-chain (chain origin target hop headers-fn accept
+                                         errback final)
+  "Issue TARGET for CHAIN, following checked hops, then call FINAL.
+ORIGIN is the URL the caller asked for and the identity errors carry.
+HEADERS-FN and ACCEPT are as in `xiiif-api--url-sync-chain'.  FINAL
+runs with the final response buffer current.  Returns CHAIN, or nil
+when the request could not be issued at all."
+  (condition-case err
+      (let ((url-request-extra-headers
+             (and headers-fn (funcall headers-fn target)))
+            (url-mime-accept-string (or accept url-mime-accept-string)))
+        (setf (xiiif-api-chain-handle chain)
+              (url-retrieve
+               target
+               (lambda (status)
+                 (let ((response-buffer (current-buffer)))
+                   (unwind-protect
+                       ;; A cancelled chain delivers nothing, matching
+                       ;; the single-request cancel semantics.
+                       (unless (xiiif-api-chain-cancelled chain)
+                         (xiiif-api--call-guarded
+                          errback origin
+                          (lambda ()
+                            (let ((net-err (plist-get status :error)))
+                              (when net-err
+                                (signal 'xiiif-network-error
+                                        (list target (error-message-string
+                                                      net-err)))))
+                            (let ((redirect (xiiif-api--url-response-redirect)))
+                              (if redirect
+                                  (xiiif-api--url-async-chain
+                                   chain origin
+                                   (xiiif-api--checked-hop
+                                    (car redirect) target (1+ hop))
+                                   (1+ hop) headers-fn accept errback final)
+                                (funcall final))))))
+                     (when (buffer-live-p response-buffer)
+                       (kill-buffer response-buffer)))))
+               nil t t))
+        chain)
+    (error
+     (funcall errback
+              (list 'xiiif-network-error target (error-message-string err)))
+     nil)))
+
 (defun xiiif-api--url-fetch-json-async (url callback errback)
   "url.el backend for `xiiif-api-fetch-json-async'."
-  (let ((url-request-extra-headers (xiiif-api--request-headers url))
-        (url-mime-accept-string
-         "application/ld+json, application/json"))
-    (condition-case err
-        (url-retrieve
-         url
-         (lambda (status)
-           (let ((response-buffer (current-buffer)))
-             (unwind-protect
-                 (condition-case handler-err
-                     (let ((net-err (plist-get status :error)))
-                       (when net-err
-                         (signal 'xiiif-network-error
-                                 (list url (error-message-string
-                                            net-err))))
-                       (funcall callback
-                                (xiiif-api--response-json url)))
-                   (xiiif-error
-                    (funcall errback handler-err))
-                   (error
-                    (funcall errback
-                             (list 'xiiif-error url
-                                   (error-message-string handler-err)))))
-               (when (buffer-live-p response-buffer)
-                 (kill-buffer response-buffer)))))
-         nil t t)
-      (error
-       (funcall errback
-                (list 'xiiif-network-error url
-                      (error-message-string err)))
-       nil))))
+  (xiiif-api--url-async-chain
+   (xiiif-api--chain) url url 0
+   #'xiiif-api--request-headers "application/ld+json, application/json"
+   errback
+   (lambda () (funcall callback (xiiif-api--response-json url)))))
 
 (defun xiiif-api-cancel (handle)
   "Cancel an in-flight request referenced by HANDLE.
 HANDLE is the value returned by an asynchronous xiiif-api fetch: a
-`url-retrieve' response buffer under the url backend, or a curl
-process object under plz.  Killing the buffer (or deleting the
-process) aborts the callback chain.  For plz the stored callbacks
-are neutralised before the process is killed, so the kill artifact
-reaches no user code; as a second line of defence the plz error
-router also recognises killed-process events.  Safe to call with
-nil, a dead buffer or a dead process."
+`xiiif-api-chain' cell wrapping whichever hop is currently in
+flight, and - for callers holding one from elsewhere - a
+`url-retrieve' response buffer or a curl process object directly.
+Killing the buffer (or deleting the process) aborts the callback
+chain.  For plz the stored callbacks are neutralised before the
+process is killed, so the kill artifact reaches no user code; as a
+second line of defence the plz error router also recognises
+killed-process events.  Marking the chain cancelled additionally
+stops it between hops, where there is no live handle to kill.  Safe
+to call with nil, a dead buffer or a dead process."
   (cond
+   ((xiiif-api-chain-p handle)
+    (setf (xiiif-api-chain-cancelled handle) t)
+    (let ((current (xiiif-api-chain-handle handle)))
+      (setf (xiiif-api-chain-handle handle) nil)
+      (xiiif-api-cancel current)))
    ((processp handle)
     (when (process-live-p handle)
       ;; plz keeps THEN/ELSE as process properties; blank them so
@@ -470,47 +608,29 @@ of cancellable handle, or nil when the URL was invalid."
           (xiiif-api--plz-fetch-bytes-async url callback errback)
         (xiiif-api--url-fetch-bytes-async url callback errback)))))
 
+(defun xiiif-api--url-body-final (url callback)
+  "Return the FINAL thunk delivering the current buffer's body to CALLBACK.
+Shared by the byte fetch and the url-backend download, which differ
+only in what they do with the bytes."
+  (lambda ()
+    (let ((code (xiiif-api--status-code)))
+      (when (and code (or (< code 200) (>= code 400)))
+        (signal 'xiiif-http-error
+                (xiiif-api--http-error-data
+                 url code
+                 (xiiif-api--retry-after-seconds
+                  (xiiif-api--header-value "Retry-After"))))))
+    (xiiif-api--check-body-size url)
+    (xiiif-api--skip-headers)
+    (set-buffer-multibyte nil)
+    (funcall callback
+             (buffer-substring-no-properties (point) (point-max)))))
+
 (defun xiiif-api--url-fetch-bytes-async (url callback errback)
   "url.el backend for `xiiif-api-fetch-bytes-async'."
-  (condition-case err
-      (url-retrieve
-       url
-       (lambda (status)
-         (let ((buf (current-buffer)))
-           (unwind-protect
-               (condition-case handler-err
-                   (let ((net-err (plist-get status :error)))
-                     (when net-err
-                       (signal 'xiiif-network-error
-                               (list url (error-message-string
-                                          net-err))))
-                     (let ((code (xiiif-api--status-code)))
-                       (when (and code (or (< code 200) (>= code 400)))
-                         (signal 'xiiif-http-error
-                                 (xiiif-api--http-error-data
-                                  url code
-                                  (xiiif-api--retry-after-seconds
-                                   (xiiif-api--header-value
-                                    "Retry-After"))))))
-                     (xiiif-api--check-body-size url)
-                     (xiiif-api--skip-headers)
-                     (set-buffer-multibyte nil)
-                     (funcall callback
-                              (buffer-substring-no-properties
-                               (point) (point-max))))
-                 (xiiif-error
-                  (funcall errback handler-err))
-                 (error
-                  (funcall errback
-                           (list 'xiiif-error url
-                                 (error-message-string handler-err)))))
-             (when (buffer-live-p buf) (kill-buffer buf)))))
-       nil t t)
-    (error
-     (funcall errback
-              (list 'xiiif-network-error url
-                    (error-message-string err)))
-     nil)))
+  (xiiif-api--url-async-chain
+   (xiiif-api--chain) url url 0 nil nil errback
+   (xiiif-api--url-body-final url callback)))
 
 ;;; ---------- plz backend ----------
 ;;
@@ -615,87 +735,120 @@ ERR is the condition-case value (SYMBOL MESSAGE PLZ-ERROR)."
     (signal (car translated) (cdr translated))))
 
 (defun xiiif-api--plz-fetch-json (url)
-  "plz backend for `xiiif-api-fetch-json'."
+  "plz backend for `xiiif-api-fetch-json'.
+Redirections come back as plz errors carrying a 3xx response, and
+are followed here so each target is checked first."
+  (let ((target url) (hop 0) (result nil) (done nil))
+    (while (not done)
+      (condition-case err
+          (setq result (xiiif-api--plz-response-json
+                        url
+                        (plz 'get target
+                          :headers (xiiif-api--plz-headers target)
+                          :as 'response
+                          :timeout xiiif-api-timeout))
+                done t)
+        (plz-error
+         (let* ((plz-err  (nth 2 err))
+                (redirect (xiiif-api--plz-response-redirect plz-err))
+                (resp     (and (plz-error-p plz-err)
+                               (plz-error-response plz-err)))
+                (status   (and resp (plz-response-status resp))))
+           (cond
+            (redirect
+             (setq target (xiiif-api--checked-hop
+                           (car redirect) target (cl-incf hop))))
+            ((eql status 304)
+             (setq result (xiiif-api--cached-json-or-error url)
+                   done t))
+            (t (xiiif-api--plz-signal url err)))))))
+    result))
+
+(defun xiiif-api--plz-async-chain (chain origin target hop as errback
+                                         then on-304)
+  "Issue TARGET for CHAIN with plz, following checked hops.
+AS is plz's `:as'; THEN receives the final plz result; ON-304, when
+non-nil, handles a 304 for ORIGIN.  Returns CHAIN, or nil when the
+request could not be issued at all."
   (condition-case err
-      (xiiif-api--plz-response-json
-       url
-       (plz 'get url
-         :headers (xiiif-api--plz-headers url)
-         :as 'response
-         :timeout xiiif-api-timeout))
-    (plz-error
-     (let* ((plz-err (nth 2 err))
-            (resp    (and (plz-error-p plz-err)
-                          (plz-error-response plz-err)))
-            (status  (and resp (plz-response-status resp))))
-       (if (eql status 304)
-           (xiiif-api--cached-json-or-error url)
-         (xiiif-api--plz-signal url err))))))
+      (progn
+        (setf (xiiif-api-chain-handle chain)
+              (plz 'get target
+                :headers (xiiif-api--plz-headers target)
+                :as as
+                :then (lambda (result)
+                        (unless (xiiif-api-chain-cancelled chain)
+                          (xiiif-api--call-guarded
+                           errback origin
+                           (lambda () (funcall then result)))))
+                :else (lambda (plz-err)
+                        (unless (xiiif-api-chain-cancelled chain)
+                          (let ((redirect (xiiif-api--plz-response-redirect
+                                           plz-err))
+                                (resp (plz-error-response plz-err)))
+                            (cond
+                             (redirect
+                              (xiiif-api--call-guarded
+                               errback origin
+                               (lambda ()
+                                 (xiiif-api--plz-async-chain
+                                  chain origin
+                                  (xiiif-api--checked-hop
+                                   (car redirect) target (1+ hop))
+                                  (1+ hop) as errback then on-304))))
+                             ((and on-304 resp
+                                   (eql (plz-response-status resp) 304))
+                              (xiiif-api--call-guarded errback origin on-304))
+                             (t
+                              (when-let ((e (xiiif-api--plz-error
+                                             origin plz-err)))
+                                (funcall errback e)))))))))
+        chain)
+    (error
+     (funcall errback
+              (list 'xiiif-network-error target (error-message-string err)))
+     nil)))
 
 (defun xiiif-api--plz-fetch-json-async (url callback errback)
   "plz backend for `xiiif-api-fetch-json-async'."
-  (condition-case err
-      (plz 'get url
-        :headers (xiiif-api--plz-headers url)
-        :as 'response
-        :then (lambda (resp)
-                (xiiif-api--call-guarded
-                 errback url
-                 (lambda ()
-                   (funcall callback
-                            (xiiif-api--plz-response-json url resp)))))
-        :else (lambda (plz-err)
-                (let* ((resp   (plz-error-response plz-err))
-                       (status (and resp (plz-response-status resp))))
-                  (if (eql status 304)
-                      (xiiif-api--call-guarded
-                       errback url
-                       (lambda ()
-                         (funcall callback
-                                  (xiiif-api--cached-json-or-error url))))
-                    (when-let ((e (xiiif-api--plz-error url plz-err)))
-                      (funcall errback e))))))
-    (error
-     (funcall errback
-              (list 'xiiif-network-error url (error-message-string err)))
-     nil)))
+  (xiiif-api--plz-async-chain
+   (xiiif-api--chain) url url 0 'response errback
+   (lambda (resp)
+     (funcall callback (xiiif-api--plz-response-json url resp)))
+   (lambda ()
+     (funcall callback (xiiif-api--cached-json-or-error url)))))
 
 (defun xiiif-api--plz-fetch-bytes-async (url callback errback)
   "plz backend for `xiiif-api-fetch-bytes-async'."
-  (condition-case err
-      (plz 'get url
-        :headers (xiiif-api--plz-headers url)
-        :as 'binary
-        :then (lambda (body)
-                (xiiif-api--call-guarded
-                 errback url
-                 (lambda ()
-                   (xiiif-api--plz-check-body-size url body)
-                   (funcall callback body))))
-        :else (lambda (plz-err)
-                (when-let ((e (xiiif-api--plz-error url plz-err)))
-                  (funcall errback e))))
-    (error
-     (funcall errback
-              (list 'xiiif-network-error url (error-message-string err)))
-     nil)))
+  (xiiif-api--plz-async-chain
+   (xiiif-api--chain) url url 0 'binary errback
+   (lambda (body)
+     (xiiif-api--plz-check-body-size url body)
+     (funcall callback body))
+   nil))
 
 (defun xiiif-api--plz-download-file (url destination)
   "plz backend for `xiiif-api-download-file'.
 The body is streamed by curl to a temporary file - never held in
 Emacs memory - then moved over DESTINATION."
-  (let (tmp)
+  (let (tmp (target url) (hop 0) (done nil))
     (unwind-protect
-        (condition-case err
-            (progn
-              (setq tmp (plz 'get url
-                          :headers (xiiif-api--plz-headers url)
-                          :as 'file
-                          :timeout xiiif-api-timeout))
-              (copy-file tmp destination t)
-              destination)
-          (plz-error
-           (xiiif-api--plz-signal url err)))
+        (progn
+          (while (not done)
+            (condition-case err
+                (setq tmp (plz 'get target
+                            :headers (xiiif-api--plz-headers target)
+                            :as 'file
+                            :timeout xiiif-api-timeout)
+                      done t)
+              (plz-error
+               (let ((redirect (xiiif-api--plz-response-redirect (nth 2 err))))
+                 (if redirect
+                     (setq target (xiiif-api--checked-hop
+                                   (car redirect) target (cl-incf hop)))
+                   (xiiif-api--plz-signal url err))))))
+          (copy-file tmp destination t)
+          destination)
       (when (and tmp (file-exists-p tmp))
         (ignore-errors (delete-file tmp))))))
 
@@ -703,26 +856,15 @@ Emacs memory - then moved over DESTINATION."
   "plz backend for `xiiif-api-download-file-async'.
 The body is streamed by curl to a temporary file, then moved over
 DESTINATION."
-  (condition-case err
-      (plz 'get url
-        :headers (xiiif-api--plz-headers url)
-        :as 'file
-        :then (lambda (tmp)
-                (xiiif-api--call-guarded
-                 errback url
-                 (lambda ()
-                   (unwind-protect
-                       (copy-file tmp destination t)
-                     (when (file-exists-p tmp)
-                       (ignore-errors (delete-file tmp))))
-                   (funcall callback destination))))
-        :else (lambda (plz-err)
-                (when-let ((e (xiiif-api--plz-error url plz-err)))
-                  (funcall errback e))))
-    (error
-     (funcall errback
-              (list 'xiiif-network-error url (error-message-string err)))
-     nil)))
+  (xiiif-api--plz-async-chain
+   (xiiif-api--chain) url url 0 'file errback
+   (lambda (tmp)
+     (unwind-protect
+         (copy-file tmp destination t)
+       (when (file-exists-p tmp)
+         (ignore-errors (delete-file tmp))))
+     (funcall callback destination))
+   nil))
 
 
 ;;; ---------- file downloads ----------
@@ -740,14 +882,22 @@ Kept for scripting; interactive commands should use
   (xiiif-api--with-redirect-limit
     (if (eq (xiiif-api--backend-for url) 'plz)
         (xiiif-api--plz-download-file url destination)
-      (let ((url-request-extra-headers (xiiif-api--request-headers url)))
-        (condition-case err
-            (progn
-              (url-copy-file url destination t)
-              destination)
-          (error
-           (signal 'xiiif-network-error
-                   (list url (error-message-string err)))))))))
+      ;; `url-copy-file' follows redirects inside url.el, where the
+      ;; hops cannot be inspected; the chain driver replaces it.
+      (xiiif-api--url-sync-chain
+       url #'xiiif-api--request-headers nil
+       (xiiif-api--url-body-final
+        url
+        (lambda (bytes)
+          (condition-case err
+              (let ((coding-system-for-write 'binary))
+                (with-temp-file destination
+                  (set-buffer-multibyte nil)
+                  (insert bytes))
+                destination)
+            (error
+             (signal 'xiiif-network-error
+                     (list url (error-message-string err)))))))))))
 
 (defun xiiif-api-download-file-async (url destination callback &optional errback)
   "Download URL to DESTINATION asynchronously.
