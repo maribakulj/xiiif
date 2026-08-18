@@ -471,3 +471,63 @@ au-dessus de 27.1 dans les deux fichiers neufs.
 
 **Prochain item.** W10.8 — la revue humaine de §20 : `accept`, `needs-correction`, `wrong-target`,
 `source-changed`, produisant un finding attachable à un `ReviewDossier`.
+
+## 2026-08-18 — W10.8 — La revue humaine de §20 : xiiif enregistre, et ne valide rien
+
+Débloqué par W7.h (`locusolus` PR #75), qui a livré `HumanReviewFinding` et son schéma.
+
+**Périmètre.** `xiiif-review.el` (neuf), `tests/xiiif-review-test.el` (neuf, 18 tests), `xiiif.el`
+(un `require`), `CLAUDE.md` et ce fichier.
+
+**Tests exécutés.** `make test` → 549 tests, 544 conformes, 0 inattendu, 5 sautés (531 → 549).
+`make compile-strict` → 0. Mutation : quinze mutants, **quinze tués, aucun survivant**.
+
+**Décisions prises.**
+
+*xiiif enregistre, et ne décide rien.* §20 : « cette revue n'est pas une validation scientifique
+complète ». La façon de le tenir n'est pas une phrase dans un commentaire mais l'absence de tout
+champ qui ressemblerait à un verdict de validation. Un test énumère les clés du document produit et
+refuse `status`, `validated`, `accepted`, `supports`, `score` ; le mutant qui ajoute
+`status: accepted` meurt. Le panneau le dit aussi à l'écran, parce que c'est le relecteur qui en a
+besoin : appuyer sur `a` ressemble à approuver quelque chose.
+
+*Un cinquième verdict est refusé, pas transmis.* Même refus qu'en Rust, réécrit ici contre des
+documents. Le laisser passer comme commentaire libre le ferait figurer au dossier sous un nom que
+personne n'a défini — et `validated` est précisément le mot que §20 retire à cette revue.
+
+*Le rapport interprétatif s'ouvre, il ne s'injecte pas.* C'est la règle de §20 qu'une implémentation
+serviable casse : ajouter la lecture de l'agent au tampon de la source, après quoi plus personne ne
+distingue le document du commentaire. Trois tampons, et le test vérifie l'absence dans les deux
+sens — la source ne contient rien du rapport, le rapport n'est pas une copie de la source avec un
+paragraphe en plus.
+
+*La région reste atteignable en texte, en deux formes.* Les coordonnées nues se collent dans
+`xiiif-select-region` ; l'URI se cite. Le premier passage de mutation a fait survivre la suppression
+de la ligne « Region » parce que le test cherchait les chiffres, que l'URI contient aussi. Les deux
+lignes sont maintenant épinglées par ancrage de ligne. Une facette qu'aucun test ne tient disparaît
+un jour sans bruit.
+
+*Rien ne part d'ici.* `xiiif-review-submit-function` est un port ; son défaut passe la main au
+client Emacs de Locus s'il est chargé — `fboundp`, jamais `require` — et sinon copie le JSON en
+disant que rien n'a été déposé. Un test empoisonne `url-retrieve` et `open-network-stream` : une
+commande qui composerait un numéro elle-même échoue ici plutôt que de marcher discrètement sur la
+machine de l'auteur.
+
+*L'invite est passée dans la spec `interactive`.* Elle était dans le corps, et une commande appelée
+depuis Lisp s'arrêtait alors pour poser une question à personne — en batch, `read-string` lit
+l'entrée standard et le harnais se bloquait. C'est la place correcte de toute façon : le corps
+enregistre, la spec demande.
+
+**Un raté à noter.** Le premier passage de mutation a annoncé deux survivants dont un était un
+mutant faux — il insérait `xiiif-review--context` dans un tampon où cette variable locale n'est pas
+encore posée, donc il injectait la chaîne vide. Le mutant a été refait à l'endroit où le risque
+existe vraiment, l'appelant. Un mutant qui ne mute rien est un faux négatif silencieux, exactement
+comme un test qui n'assère rien.
+
+**Écart avec la spec.** §20 demande aussi d'afficher OCR source/correction et contexte. `xiiif-ocr.el`
+et `xiiif-show-ocr` le font déjà et ne sont pas rappelés ici : la revue ouvre la source, et l'OCR
+s'ouvre depuis elle par les commandes existantes. Rien de neuf n'était dû, et en dupliquer une
+version « pour la revue » aurait créé un second affichage à maintenir.
+
+**Prochain item.** Ce dépôt n'a plus d'item bloqué ni déverrouillé en attente : §15, §19 et §20 sont
+tenus. La suite vient de `locusolus/docs/10_V1_ROADMAP.md` — W9 (visualisation, `apps/web`).

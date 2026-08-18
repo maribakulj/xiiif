@@ -2,7 +2,7 @@
 
 ## Où tu es
 
-Package Emacs mûr : v0.4.0, 27 fichiers `.el`, 41 fichiers de tests ERT, CI verte. **C'est le
+Package Emacs mûr : v0.4.0, 28 fichiers `.el`, 42 fichiers de tests ERT, CI verte. **C'est le
 seul dépôt du chantier où l'essentiel de la V1 est déjà écrit.** Un `ROADMAP.md`, un `PLAN-0.4.md`
 et un `SPECS-0.4.md` existent et sont à jour — ne les réaudite pas.
 
@@ -71,10 +71,30 @@ son site. Deux tests le tiennent par égalité stricte, pas par lecture de phras
 Les absences ne se collapsent pas non plus : `unverified` n'est pas un `broken` atténué,
 `unrecorded` et `unchecked` sont deux ignorances différentes.
 
-## Reste bloqué sur `locusolus/packages/protocol`
+## §20 : fait aussi. Ce qu'il ne faut pas y ajouter
 
-La revue humaine `accept` / `needs-correction` / `wrong-target` / `source-changed` (§20) et le
-`ReviewDossier` auquel le finding s'attache. N'invente pas ces schémas ici.
+`xiiif-review.el` enregistre les quatre verdicts de §20 et le commentaire libre, sous leurs noms,
+et **xiiif ne valide rien**. Le finding produit ne porte aucun champ qu'un lecteur prendrait pour
+une validation — un test énumère les clés admises et refuse `status`, `accepted`, `supports`. Un
+cinquième verdict est refusé plutôt que transmis comme texte libre : un mot que personne n'a défini
+serait quand même compté dans le dossier.
+
+Deux règles d'affichage à ne pas « simplifier » :
+
+- **Le rapport interprétatif s'ouvre, il ne s'injecte pas.** L'implémentation serviable l'ajoute au
+  tampon de la source, et plus personne ne distingue le document de la lecture qu'on en fait. Trois
+  tampons, et un test vérifie que la source ne contient rien du rapport.
+- **La région revendiquée reste atteignable en texte** — coordonnées nues *et* URI. §23 : l'image
+  rendue n'est jamais le seul moyen d'atteindre une région, et la revue se fait souvent hors
+  affichage graphique.
+
+Rien ne part d'ici : `xiiif-review-submit-function` est un port. Son défaut passe la main au client
+Emacs de Locus **s'il est chargé** (`fboundp`, jamais `require`), sinon copie le JSON. xiiif
+n'ouvre aucune connexion vers Locus.
+
+## Ce dépôt n'a plus d'item bloqué
+
+§15, §19 et §20 sont tenus. Les prochains items viendront de la roadmap `locusolus/docs/10`.
 
 ---
 
