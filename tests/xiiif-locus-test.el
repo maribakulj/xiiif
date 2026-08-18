@@ -296,7 +296,11 @@ one thing a redesigned website cannot touch."
 (ert-deftest xiiif-locus/the-screen-shows-five-headings-in-order ()
   (let* ((text (xiiif-locus-test--render (xiiif-locus-test--ref)))
          (labels (mapcar #'cdr xiiif-locus-facet-labels))
-         (positions (mapcar (lambda (label) (string-search label text)) labels)))
+         ;; `string-match-p' rather than `string-search': the package
+         ;; declares Emacs 27.1, and that function arrived in 28.
+         (positions (mapcar (lambda (label)
+                              (string-match-p (regexp-quote label) text))
+                            labels)))
     (should (= 5 (length labels)))
     (dolist (position positions) (should position))
     (should (equal positions (sort (copy-sequence positions) #'<)))
@@ -318,11 +322,13 @@ source having moved."
             (let* ((text (xiiif-locus-test--render
                           ref (list :replayed-hash (xiiif-locus-test--hash ?a)
                                     :live-hash live)))
-                   (start (string-search
-                           (alist-get 'integrity xiiif-locus-facet-labels)
+                   (start (string-match-p
+                           (regexp-quote
+                            (alist-get 'integrity xiiif-locus-facet-labels))
                            text))
-                   (end (string-search
-                         (alist-get 'divergences xiiif-locus-facet-labels)
+                   (end (string-match-p
+                         (regexp-quote
+                          (alist-get 'divergences xiiif-locus-facet-labels))
                          text)))
               (should (and start end (< start end)))
               (substring text start end)))))

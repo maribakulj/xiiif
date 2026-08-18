@@ -461,5 +461,13 @@ facette affiche quand on la lui fournit, mais rien ne la remplit encore automati
 demande de relire les métadonnées live et de savoir lesquelles le run avait retenues, ce que le
 schéma `remote-artifact-ref` ne transporte pas. Déclaré plutôt que simulé.
 
+**Rouge en CI, réparé en une passe.** Douze tests rouges sur Emacs 27.2 seulement : `xiiif-locus.el`
+appelait `string-equal-ignore-case` (Emacs 29) et `string-search` (Emacs 28) dans un paquet qui
+déclare `((emacs "27.1"))`. Le local est en 29.3, et la CI lance `make compile` — permissif — et non
+`make compile-strict`, donc l'avertissement « not known to be defined » n'a rien arrêté : c'est la
+suite ERT sur 27.2 qui a servi de garde. Remplacés par `downcase` et `string-match-p`, dont le
+comportement est ici identique. Le dépôt a été rebalayé avec `help-fns--first-release` : plus rien
+au-dessus de 27.1 dans les deux fichiers neufs.
+
 **Prochain item.** W10.8 — la revue humaine de §20 : `accept`, `needs-correction`, `wrong-target`,
 `source-changed`, produisant un finding attachable à un `ReviewDossier`.

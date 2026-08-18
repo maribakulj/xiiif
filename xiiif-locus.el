@@ -189,7 +189,11 @@ when it does not, and `unverified' when nothing was replayed.  The
 third is not a milder form of the second: nobody looked."
   (cond
    ((not (stringp replayed)) 'unverified)
-   ((string-equal-ignore-case replayed (xiiif-locus-ref-snapshot-hash ref))
+   ;; `downcase' rather than `string-equal-ignore-case': the package
+   ;; declares Emacs 27.1, and that function arrived in 29.  Hashes are
+   ;; ASCII hex, so folding case here means exactly what it says.
+   ((string= (downcase replayed)
+             (downcase (xiiif-locus-ref-snapshot-hash ref)))
     'holds)
    (t 'broken)))
 
@@ -207,7 +211,7 @@ This verdict says nothing about the proof.  See
     (cond
      ((null at-run) 'unrecorded)
      ((not (stringp live-now)) 'unchecked)
-     ((string-equal-ignore-case at-run live-now) 'unchanged)
+     ((string= (downcase at-run) (downcase live-now)) 'unchanged)
      (t 'moved))))
 
 
@@ -229,7 +233,7 @@ nothing on disk."
        ;; An annotation target is a Canvas URI, often with the claimed
        ;; region hanging off it.  The fragment is not part of the URL to
        ;; fetch, and it is the half worth reporting.
-       (let* ((hash (string-search "#" value))
+       (let* ((hash (string-match-p "#" value))
               (base (if hash (substring value 0 hash) value))
               (fragment (and hash (substring value (1+ hash)))))
          (list :action 'resource :target base
