@@ -391,3 +391,83 @@ orthographes (`-L`, `--location`, `--location-trusted`, `--max-redirs=N`).
 **Prochain item.** Ce dépôt n'a plus d'item déverrouillé. Tout ce qui reste — `RemoteArtifactRef`,
 `xiiif-open-locus-artifact`, l'affichage §19, la revue humaine §20 — attend
 `locusolus/packages/protocol`, donc l'approbation d'ADR 0011 (PR #6 `locusolus`).
+
+## 2026-08-18 — W10.7 — xiiif consomme `RemoteArtifactRef` : les cinq facettes de §19
+
+Le blocage a sauté : `locusolus/packages/artifacts` a livré `RemoteArtifactRef` et le schéma
+`schemas/artifacts/1.0/remote-artifact-ref.schema.json` (W6.f, PR #74 `locusolus`). Ce qui manquait
+ici n'était plus le contrat mais son lecteur.
+
+**Périmètre.** `xiiif-locus.el` (neuf), `tests/xiiif-locus-test.el` (neuf, 32 tests),
+`xiiif-errors.el` (une erreur), `xiiif.el` (un `require`), `tests/xiiif-api-surface-test.el` (le
+neuvième nom de §15), `CLAUDE.md` et ce fichier.
+
+**Tests exécutés.** `make test` → 531 tests, 526 conformes, 0 inattendu, 5 sautés (499 → 531).
+`make compile-strict` → 0. Puis mutation : quinze mutants sur les gardes de `xiiif-locus.el`,
+**quinze tués**, aucun survivant.
+
+Le harnais de mutation a d'abord annoncé quinze survivants. Il ne mesurait rien :
+`make compile-strict` laisse des `.elc`, Emacs les préfère au source, et la suite notait le
+bytecode intact pendant que je modifiais le `.el`. C'est la troisième fois sur ce chantier qu'un
+vert dépend d'un ordre de chargement plutôt que du code ; le script fait maintenant `make clean`
+et **affirme** qu'aucun `.elc` ne subsiste avant de commencer.
+
+**Décisions prises.**
+
+*Deux verdicts, jamais un.* §19 tient en une phrase — « une ressource distante modifiée après le
+run ne doit jamais faire croire que la preuve historique a changé » — et cette phrase interdit
+l'accesseur unique qu'on aurait spontanément écrit. Il y a donc `xiiif-locus-proof-standing`, qui
+seul parle de la preuve, et `xiiif-locus-live-drift`, qui n'en parle jamais. Le test qui compte ne
+lit pas une phrase à l'écran : il fige la relecture, fait bouger la source, et exige que la facette
+« intégrité » soit **identique caractère pour caractère**. Une fuite d'un seul mot le casse — et
+c'est ce qui a tué le mutant qui ajoutait une ligne `Source:` à cette facette.
+
+*Quatre réponses à la dérive, pas trois.* « Rien n'a été relevé au run » et « personne n'a regardé
+depuis » sont deux ignorances différentes : la seconde est à une touche près, la première ne sera
+jamais levée. Les afficher pareil ferait chercher une action qui n'existe pas. D'où `unrecorded` et
+`unchecked`, distincts, chacun produit par un document réel.
+
+*Ce qu'Emacs ne sait pas calculer n'est pas une preuve cassée.* Locus peut écrire un hash blake3 ;
+`secure-hash` ne le calcule pas. Rendre `broken` mettrait en doute un run correct pour une lacune
+du viewer. La vérification rend `unverified` avec la raison — comme pour une référence distante,
+dont xiiif ne détient aucune copie à rejouer.
+
+*Un locator inconnu est refusé, un `viewer_hint` inconnu est gardé.* L'asymétrie est voulue : un
+indice que xiiif ne connaît pas ne change rien, un locator que xiiif ne connaît pas change **ce
+qu'on regarde**, et l'ignorer en silence ouvrirait une autre ressource que celle citée. Même
+raison que la règle « exactement un » : deux locators laisseraient xiiif choisir, donc choisir
+autrement d'une fois sur l'autre.
+
+*Le refus est réécrit ici, pas partagé.* `packages/artifacts` refuse déjà zéro ou deux locators, en
+Rust. xiiif le refait, en Elisp, contre des documents — sans lire ce code ni l'importer. Deux
+implémentations qui ne se consultent pas est la seule configuration où l'accord vaut quelque chose ;
+une bibliothèque commune serait d'accord avec elle-même même en ayant tort.
+
+*Le rendu n'emprunte pas `xiiif-ui--insert-field`.* Celui-ci saute les valeurs vides, ce qui est
+juste pour un manifeste et faux ici : une ligne d'intégrité absente se lit comme un satisfecit.
+`xiiif-locus--insert-line` n'en saute aucune, et un mutant qui rebranche l'un sur l'autre meurt.
+
+**Frontière.** `xiiif-locus.el` ne `require` aucun module Locus et n'évalue rien de ce qu'il
+reçoit. Deux tests le tiennent : `features` ne contient aucun symbole en `locus*` après chargement,
+et — parce qu'un `require` caché dans un corps de fonction échapperait au premier — un balayage des
+27 sources du dépôt cherche `(require 'locus…)` et `(load 'locus…)`. Le locator passe par
+`xiiif-url-check` comme une URL tapée par l'utilisateur : le test poisonne `xiiif-open-manifest` et
+vérifie qu'il n'est jamais atteint pour `169.254.169.254`.
+
+**Écart avec la spec.** §19 nomme « les divergences de métadonnées ou de contenu ». Le divergent de
+contenu est calculé et affiché ; celui de métadonnées est une fonction pure
+(`xiiif-locus-metadata-divergences`, qui compte un champ disparu comme une divergence) que la
+facette affiche quand on la lui fournit, mais rien ne la remplit encore automatiquement — cela
+demande de relire les métadonnées live et de savoir lesquelles le run avait retenues, ce que le
+schéma `remote-artifact-ref` ne transporte pas. Déclaré plutôt que simulé.
+
+**Rouge en CI, réparé en une passe.** Douze tests rouges sur Emacs 27.2 seulement : `xiiif-locus.el`
+appelait `string-equal-ignore-case` (Emacs 29) et `string-search` (Emacs 28) dans un paquet qui
+déclare `((emacs "27.1"))`. Le local est en 29.3, et la CI lance `make compile` — permissif — et non
+`make compile-strict`, donc l'avertissement « not known to be defined » n'a rien arrêté : c'est la
+suite ERT sur 27.2 qui a servi de garde. Remplacés par `downcase` et `string-match-p`, dont le
+comportement est ici identique. Le dépôt a été rebalayé avec `help-fns--first-release` : plus rien
+au-dessus de 27.1 dans les deux fichiers neufs.
+
+**Prochain item.** W10.8 — la revue humaine de §20 : `accept`, `needs-correction`, `wrong-target`,
+`source-changed`, produisant un finding attachable à un `ReviewDossier`.

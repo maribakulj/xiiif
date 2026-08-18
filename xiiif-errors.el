@@ -26,6 +26,8 @@
   "xiiif JSON nests deeper than the configured limit" 'xiiif-parse-error)
 (define-error 'xiiif-url-refused
   "xiiif refused this URL" 'xiiif-network-error)
+(define-error 'xiiif-locus-invalid
+  "xiiif refused this Locus artifact reference" 'xiiif-error)
 
 (provide 'xiiif-errors)
 ;;; xiiif-errors.el ends here
