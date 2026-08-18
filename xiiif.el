@@ -64,6 +64,7 @@
 (require 'xiiif-sources)
 (require 'xiiif-ui)
 (require 'xiiif-locus)
+(require 'xiiif-review)
 (require 'xiiif-org)
 (require 'xiiif-annot)
 (require 'xiiif-batch)
