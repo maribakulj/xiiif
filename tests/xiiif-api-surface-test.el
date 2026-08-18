@@ -9,13 +9,11 @@
 ;; first test here is simply that they are all bound - it is what makes
 ;; §15 a contract rather than a wish list.
 ;;
-;; One of the nine is deliberately absent and stays absent until its
-;; blocker clears:
-;;
-;;   xiiif-open-locus-artifact - needs locusolus/packages/protocol
-;;
-;; It is listed here rather than asserted on: a test that fails the day
-;; a feature lands is a bad alarm.
+;; All nine are delivered.  The last of them, xiiif-open-locus-artifact,
+;; waited on the RemoteArtifactRef schema in locusolus/packages/protocol
+;; and landed with `xiiif-locus'; its own behaviour is tested in
+;; xiiif-locus-test.el, and what is asserted here is only that §15 has
+;; no holes left.
 
 ;;; Code:
 
@@ -33,8 +31,9 @@
     xiiif-select-region
     xiiif-export-content-state
     xiiif-create-annotation
-    xiiif-open-external-viewer)
-  "The §15 names that are delivered today.")
+    xiiif-open-external-viewer
+    xiiif-open-locus-artifact)
+  "The §15 names, all nine of them.")
 
 (defun xiiif-api-surface-test--manifest ()
   (make-xiiif-manifest

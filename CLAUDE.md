@@ -2,7 +2,7 @@
 
 ## Où tu es
 
-Package Emacs mûr : v0.4.0, 23 fichiers `.el`, 33 fichiers de tests ERT, CI verte. **C'est le
+Package Emacs mûr : v0.4.0, 27 fichiers `.el`, 41 fichiers de tests ERT, CI verte. **C'est le
 seul dépôt du chantier où l'essentiel de la V1 est déjà écrit.** Un `ROADMAP.md`, un `PLAN-0.4.md`
 et un `SPECS-0.4.md` existent et sont à jour — ne les réaudite pas.
 
@@ -56,11 +56,25 @@ XXE : sans objet par construction — `xiiif-ocr.el` scanne le XML par regexp sa
 `libxml-parse-xml-region`, donc aucune résolution d'entité. Ne « corrige » pas ce qui n'est pas
 cassé, mais ajoute les limites de taille.
 
-## Bloqué sur `locusolus/packages/protocol`
+## §19 : fait. Ne le refais pas, et ne le simplifie surtout pas
 
-`RemoteArtifactRef`, `xiiif-open-locus-artifact`, l'affichage séparé identité / live / snapshot /
-intégrité / divergences (§19), la revue humaine `accept` / `needs-correction` / `wrong-target` /
-`source-changed` (§20). N'invente pas ces schémas ici.
+`xiiif-locus.el` lit `RemoteArtifactRef` comme une donnée — refus indépendants de ceux de
+`locusolus/packages/artifacts`, aucun code Locus importé, aucun contenu évalué. `xiiif-open-locus-artifact`
+existe, et §15 n'a plus de trou.
+
+La chose à ne pas casser : **deux verdicts, jamais un.** `xiiif-locus-proof-standing` parle de la
+preuve, `xiiif-locus-live-drift` n'en parle jamais, et la facette « intégrité » est identique
+caractère pour caractère quelle que soit la dérive. Un accesseur qui résumerait les deux en un seul
+« intégrité : divergente » ferait douter d'un run correct chaque fois qu'une bibliothèque remanie
+son site. Deux tests le tiennent par égalité stricte, pas par lecture de phrase.
+
+Les absences ne se collapsent pas non plus : `unverified` n'est pas un `broken` atténué,
+`unrecorded` et `unchecked` sont deux ignorances différentes.
+
+## Reste bloqué sur `locusolus/packages/protocol`
+
+La revue humaine `accept` / `needs-correction` / `wrong-target` / `source-changed` (§20) et le
+`ReviewDossier` auquel le finding s'attache. N'invente pas ces schémas ici.
 
 ---
 

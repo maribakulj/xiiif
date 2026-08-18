@@ -63,6 +63,7 @@
 (require 'xiiif-ocr)
 (require 'xiiif-sources)
 (require 'xiiif-ui)
+(require 'xiiif-locus)
 (require 'xiiif-org)
 (require 'xiiif-annot)
 (require 'xiiif-batch)
